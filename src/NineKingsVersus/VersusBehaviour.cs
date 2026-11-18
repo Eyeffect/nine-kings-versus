@@ -70,6 +70,14 @@ public sealed class VersusBehaviour : MonoBehaviour
     {
         TrackScene();
         VersusNet.Tick();
+
+        if (_pendingEndType.HasValue && _endRetryAt > 0f && Time.time >= _endRetryAt)
+        {
+            _endRetryAt = -1f;
+            var pending = _pendingEndType.Value;
+            ShowOfficialEnd(pending);
+        }
+
         // custom arena disabled: returning to official Gameplay flow
 
         var dumpTroops = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-troops");
@@ -1386,7 +1394,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         if (iAmLoser)
         {
             RunCommand("SetLife 0");
-            VersusNativeMenu.ShowResult("DEFEAT");
+            ShowOfficialEnd(GameplayInterface.GameplayUI_EndUI.EndUIType.Defeat);
         }
         else
         {
@@ -1402,7 +1410,45 @@ public sealed class VersusBehaviour : MonoBehaviour
                 VersusPlugin.Log.LogWarning($"match-result: stop combat failed: {e.Message}");
             }
 
-            VersusNativeMenu.ShowResult("VICTORY");
+            ShowOfficialEnd(GameplayInterface.GameplayUI_EndUI.EndUIType.Victory);
+        }
+    }
+
+    private static float _endRetryAt = -1f;
+    private static int _endRetryCount;
+    private static GameplayInterface.GameplayUI_EndUI.EndUIType? _pendingEndType;
+
+    private static void ShowOfficialEnd(GameplayInterface.GameplayUI_EndUI.EndUIType type)
+    {
+        try
+        {
+            var method = typeof(Core.Wave).GetMethod("OnCompleteGame",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Static);
+            if (method == null)
+            {
+                VersusPlugin.Log.LogWarning("match-result: OnCompleteGame not found");
+                return;
+            }
+
+            method.Invoke(null, new object[] { type });
+            VersusPlugin.Log.LogInfo($"match-result: OnCompleteGame({type})");
+            _pendingEndType = null;
+        }
+        catch (Exception e)
+        {
+            var message = (e.InnerException ?? e).Message;
+            if (_endRetryCount < 3)
+            {
+                _pendingEndType = type;
+                _endRetryAt = Time.time + 3f;
+                _endRetryCount++;
+                VersusPlugin.Log.LogWarning($"match-result: end screen delayed (attempt {_endRetryCount}): {message}");
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning($"match-result: OnCompleteGame failed: {message}");
+            }
         }
     }
 
