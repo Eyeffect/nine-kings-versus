@@ -76,7 +76,7 @@ internal static class VersusNativeMenu
             button.onClick.RemoveAllListeners();
             VersusPlugin.Log.LogInfo("menu-button: listeners cleared");
             button.onClick.AddListener(
-                DelegateSupport.ConvertDelegate<UnityEngine.Events.UnityAction>(() => Toggle()));
+                DelegateSupport.ConvertDelegate<UnityEngine.Events.UnityAction>(() => ShowNativeMainMenuPanel()));
             VersusPlugin.Log.LogInfo("menu-button: listener added");
 
             VersusPlugin.Log.LogInfo("native VERSUS button installed in main menu");
@@ -142,6 +142,113 @@ internal static class VersusNativeMenu
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"result screen failed: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Repurposes the game's native Start Game panel into a versus control panel.
+    /// Uses the real prefab, buttons, font and main-menu input handling.
+    /// </summary>
+    private static void ShowNativeMainMenuPanel()
+    {
+        try
+        {
+            var menu = UnityEngine.Object.FindObjectOfType<MainMenuUI.MainMenuUI_Main>();
+            var panel = menu?._startGamePanel;
+            if (panel == null)
+            {
+                VersusPlugin.Log.LogWarning("native main-menu panel missing");
+                return;
+            }
+
+            var labels = new System.Collections.Generic.Dictionary<Button, string>
+            {
+                { panel.continueBtn, "CLOSE" },
+                { panel.singleplayerBtn, "HOST" },
+                { panel.challengeModeBtn, "JOIN" },
+                { panel.rankedModeBtn, "START BATTLE" },
+                { panel.backBtn, "REBUILD BOARD" },
+            };
+
+            foreach (var pair in labels)
+            {
+                var button = pair.Key;
+                if (button == null)
+                {
+                    continue;
+                }
+
+                var text = button.GetComponentInChildren<TextMeshProUGUI>(true);
+                if (text != null)
+                {
+                    text.text = pair.Value;
+                }
+
+                button.onClick.RemoveAllListeners();
+                var action = pair.Value;
+                var listener = DelegateSupport.ConvertDelegate<UnityEngine.Events.UnityAction>(new Action(() =>
+                {
+                    if (action == "CLOSE")
+                    {
+                        panel.HidePanel();
+                    }
+                    else if (action == "HOST" || action == "JOIN")
+                    {
+                        var mode = action == "HOST" ? "host" : "join";
+                        var path = Path.Combine(VersusPlugin.DataDir, "net.json");
+                        var peer = "127.0.0.1";
+                        var port = 28764;
+                        if (File.Exists(path))
+                        {
+                            try
+                            {
+                                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+                                if (doc.RootElement.TryGetProperty("peer", out var p))
+                                {
+                                    peer = p.GetString() ?? peer;
+                                }
+                            }
+                            catch
+                            {
+                            }
+                        }
+
+                        File.WriteAllText(path, $"{{\"mode\":\"{mode}\",\"peer\":\"{peer}\",\"port\":{port}}}");
+                    }
+                    else if (action == "START BATTLE")
+                    {
+                        ApplyFlag("start-battle", true);
+                    }
+                    else if (action == "REBUILD BOARD")
+                    {
+                        ApplyFlag("build-enemy", true);
+                    }
+                }));
+                _nativeListeners.Add(listener);
+                button.onClick.AddListener(listener);
+            }
+
+            panel.ShowPanel();
+            VersusPlugin.Log.LogInfo("native main-menu versus panel shown");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"native main-menu panel failed: {e.Message}");
+        }
+    }
+
+    private static readonly System.Collections.Generic.List<object> _nativeListeners = new System.Collections.Generic.List<object>();
+
+    private static void ApplyFlag(string name, bool enabled)
+    {
+        var path = Path.Combine(VersusPlugin.DataDir, name);
+        if (enabled)
+        {
+            File.WriteAllText(path, "1");
+        }
+        else if (File.Exists(path))
+        {
+            File.Delete(path);
         }
     }
 
