@@ -36,6 +36,8 @@ public sealed class VersusPlugin : BasePlugin
             PatchOne(harmony, typeof(Patches.PrepareGauntletPatch));
             PatchOne(harmony, typeof(Patches.SpawnWavePatch));
             PatchOne(harmony, typeof(Patches.GetWaveSnapshotPatch));
+            PatchOne(harmony, typeof(Patches.SetWavePatch));
+            PatchOne(harmony, typeof(Patches.CompleteWavePatch));
             PatchOne(harmony, typeof(Patches.StartCombatPatch));
             PatchOne(harmony, typeof(Patches.CaptureSnapshotPatch));
             PatchOne(harmony, typeof(Patches.WaveStartPatch));

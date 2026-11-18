@@ -39,6 +39,24 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.SetWave))]
+    internal static class SetWavePatch
+    {
+        private static bool Prefix()
+        {
+            return !VersusBehaviour.ResultPending();
+        }
+    }
+
+    [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.CompleteWave))]
+    internal static class CompleteWavePatch
+    {
+        private static bool Prefix()
+        {
+            return !VersusBehaviour.ResultPending();
+        }
+    }
+
     [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.StartWave))]
     internal static class WaveStartPatch
     {

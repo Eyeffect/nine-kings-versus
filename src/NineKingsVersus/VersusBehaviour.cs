@@ -280,7 +280,8 @@ public sealed class VersusBehaviour : MonoBehaviour
         // The game re-issues rewards when StartWave is repeated; keep the hand from
         // flooding so combat remains playable in arena mode.
         if (_lastScene == "Gameplay" && Time.time >= _handTrimAt &&
-            System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
+            (System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")) ||
+             System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "custom-deck"))))
         {
             _handTrimAt = Time.time + 4f;
             try
@@ -1495,6 +1496,11 @@ public sealed class VersusBehaviour : MonoBehaviour
     /// StartWave for a wave is allowed (the game otherwise re-issues rewards and
     /// floods the hand); after a match result no further waves may start.
     /// </summary>
+    public static bool ResultPending()
+    {
+        return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0;
+    }
+
     public static bool ClaimStartWave()
     {
         var active = System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")) ||

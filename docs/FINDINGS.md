@@ -179,6 +179,14 @@ Both peers:
 
 This is the closest validated configuration to the official game: real Gameplay scene, enemy base areas, opponent army through the game's own deck/CreateEnemies path, and one winner. Combat remains somewhat unstable in true multiplayer mode (entity counts fluctuate and waves can advance while the result is pending), but the full chain now runs end to end.
 
+## Result freeze
+
+Decompiled `Wave.<SetWave>d__218.MoveNext` (0x1806473F0): it calls `SetFixWave`, `HandCards`, `StartWave`, and `CompleteWave(callUIs, giveWaveMoney, applyConstructionPitGrant)`. So wave advancement runs through `SetWave` → `CompleteWave` → `StartWave`.
+
+Added Harmony bool prefixes on `Core.Wave.SetWave` and `Core.Wave.CompleteWave` that skip the original when `VersusBehaviour.ResultPending()` is true (result handled, peer result received, or elimination reported).
+
+Two-process validation: after the result, both peers stayed at wave 16 with `map=active`, enemy base areas present, and no further wave starts. Host `Defeat`, join `Victory`, official end screens. Post-result hand growth remained in the join copy; extended the periodic hand trim to the custom-deck configuration as well.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
