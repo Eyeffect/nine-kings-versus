@@ -541,6 +541,75 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
+    /// Uses the game's multiplayer map-preview renderer to build a visual enemy
+    /// base from the opponent snapshot. This is the missing base presentation.
+    /// </summary>
+    public static void ShowOpponentPreview()
+    {
+        try
+        {
+            var manager = UnityEngine.Object.FindObjectOfType<Gameplay.GameplayMultiplayerManager>();
+            if (manager == null)
+            {
+                VersusPlugin.Log.LogWarning("preview: no GameplayMultiplayerManager");
+                return;
+            }
+
+            var field = typeof(Gameplay.GameplayMultiplayerManager).GetProperty("m_MapPreview",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var preview = field?.GetValue(manager);
+            if (preview == null)
+            {
+                VersusPlugin.Log.LogWarning("preview: no m_MapPreview property");
+                return;
+            }
+
+            var show = preview.GetType().GetMethod("Show",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            if (show == null)
+            {
+                VersusPlugin.Log.LogWarning("preview: Show not found");
+                return;
+            }
+
+            var king = Core.Wave.WaveKing?.Scriptable;
+            var snapshot = GetOpponentSnapshot();
+            if (king == null || snapshot == null)
+            {
+                VersusPlugin.Log.LogWarning("preview: missing king or snapshot");
+                return;
+            }
+
+            var result = show.Invoke(preview, new object[] { king, snapshot, false });
+            VersusPlugin.Log.LogInfo($"preview: Show(king={king.name}) returned {result}");
+
+            try
+            {
+                var enter = typeof(Gameplay.GameplayMultiplayerManager).GetMethod("EnterEnemyMapView",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance);
+                var session = MultiplayerSystems.MultiplayerManager.Session;
+                var run = session?.GetDataByPlayerKing(king.Owner);
+                if (enter != null && run != null)
+                {
+                    enter.Invoke(manager, new object[] { run, king, snapshot });
+                    VersusPlugin.Log.LogInfo("preview: EnterEnemyMapView invoked");
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"preview EnterEnemyMapView failed: {e.Message}");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"preview failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    /// <summary>
     /// Returns the best available opponent snapshot: live LAN state first, then
     /// the attached session's gauntlet run, then the injected static snapshot.
     /// </summary>

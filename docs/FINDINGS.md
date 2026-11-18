@@ -200,6 +200,18 @@ Important confirmations from the full corpus:
 
 Best approach confirmed: keep the official Gameplay scene, install the opponent's deck on all enemy kings, build base areas with `RefreshMultiplayerMap`, sync peers over LAN, and use `OnCompleteGame` + `ShowMultiplayerResults` for a shared result. The async gauntlet/server path remains unusable offline.
 
+## Enemy base visual solved
+
+Area dump showed the scene contains only **25 `KingdomArea` objects** — the player's board. There are no separate enemy-base areas; `GetAreasWithAnythingPlaced(true)` reads the same objects with a multiplayer flag. The opponent base is rendered by a completely separate component.
+
+`Gameplay.GameplayMultiplayerManager` has a `m_MapPreview` **property** of type `MultiplayerRemoteMapPreview`, plus the method `EnterEnemyMapView(MultiplayerRunData run, KingSo king, GameSnapshot snapshot)`. `MultiplayerRemoteMapPreview.Show(KingSo, GameSnapshot, bool)` builds a fake board with walls/lives/areas from the opponent snapshot.
+
+Implemented `show-preview` flag in `LocalSessionProbe.ShowOpponentPreview()`: resolves `m_MapPreview`, calls `Show(king, snapshot, false)` (returned True), then `EnterEnemyMapView(run, king, snapshot)` using `Session.GetDataByPlayerKing(king.Owner)`.
+
+Two-process run with `show-preview` enabled: the enemy base appeared on screen (owner-confirmed), while both sides remained in combat at wave 16 with `map=active` and enemy areas populated (`enemyTroops=6-7`, `enemyBig=7-9`).
+
+Remaining: the preview is currently triggered once at startup rather than refreshed per wave; result/end-screen flow already works.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
