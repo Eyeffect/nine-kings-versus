@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Reflection;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
@@ -69,6 +70,27 @@ public sealed class VersusBehaviour : MonoBehaviour
     {
         TrackScene();
         VersusNet.Tick();
+        CustomArena.Update(Time.deltaTime);
+
+        var customArenaFlag = System.IO.Path.Combine(VersusPlugin.DataDir, "custom-arena");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(customArenaFlag))
+        {
+            System.IO.File.Delete(customArenaFlag);
+            try
+            {
+                var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
+                Array.Sort(files, StringComparer.Ordinal);
+                var local = files.Length > 0
+                    ? Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(File.ReadAllText(files[^1]))
+                    : null;
+                var opponent = LocalSessionProbe.GetOpponentSnapshot();
+                CustomArena.StartBattle(local, opponent);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"custom-arena flag failed: {e.Message}");
+            }
+        }
 
         var dumpMenu = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-menu");
         if (_lastScene == "MainMenu" && System.IO.File.Exists(dumpMenu))
