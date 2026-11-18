@@ -53,6 +53,8 @@ internal static class TroopCatalog
 
                 var entry = new Entry { name = asset.name };
                 Collect((object)asset, entry.values, 0);
+                CollectEffectMethod(asset, "GetWaveStartEffects", entry.values);
+                CollectEffectMethod(asset, "GetWaveEndEffects", entry.values);
                 entries.Add(entry);
             }
 
@@ -149,9 +151,77 @@ internal static class TroopCatalog
         {
             output[key + "_len"] = text.Length;
         }
-        else if (depth < 3 && !(value is string) && !(value is System.Collections.IEnumerable))
+        else if (depth < 3 && value is System.Collections.IEnumerable enumerable && !(value is string))
+        {
+            CollectEnumerable(enumerable, key, output, depth);
+        }
+        else if (depth < 3 && !(value is string))
         {
             Collect(value, output, depth + 1);
+        }
+    }
+
+    private static void CollectEffectMethod(object source, string methodName, Dictionary<string, double> output)
+    {
+        try
+        {
+            var method = source.GetType().GetMethod(methodName,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static,
+                null, Type.EmptyTypes, null);
+            if (method == null)
+            {
+                return;
+            }
+
+            var result = method.Invoke(method.IsStatic ? null : source, null) as System.Collections.IEnumerable;
+            if (result != null)
+            {
+                CollectEnumerable(result, methodName, output, 1);
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"troop catalog: {methodName} failed: {e.Message}");
+        }
+    }
+
+    private static void CollectEnumerable(System.Collections.IEnumerable source, string key,
+        Dictionary<string, double> output, int depth)
+    {
+        var index = 0;
+        foreach (var item in source)
+        {
+            if (index >= 16)
+            {
+                break;
+            }
+
+            if (item == null)
+            {
+                index++;
+                continue;
+            }
+
+            if (item is double || item is float || item is int || item is long || item is short || item is bool)
+            {
+                output[$"{key}_{index}"] = Convert.ToDouble(item);
+            }
+            else if (item is string text)
+            {
+                output[$"{key}_{index}_len"] = text.Length;
+            }
+            else
+            {
+                var nested = new Dictionary<string, double>();
+                Collect(item, nested, depth + 1);
+                foreach (var pair in nested)
+                {
+                    output[$"{key}_{index}_{pair.Key}"] = pair.Value;
+                }
+            }
+
+            index++;
         }
     }
 
