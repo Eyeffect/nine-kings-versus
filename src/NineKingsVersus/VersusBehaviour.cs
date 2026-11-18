@@ -72,6 +72,13 @@ public sealed class VersusBehaviour : MonoBehaviour
         VersusNet.Tick();
         CustomArena.Update(Time.deltaTime);
 
+        var dumpTroops = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-troops");
+        if (System.IO.File.Exists(dumpTroops))
+        {
+            System.IO.File.Delete(dumpTroops);
+            TroopCatalog.Dump();
+        }
+
         var customArenaFlag = System.IO.Path.Combine(VersusPlugin.DataDir, "custom-arena");
         if (_lastScene == "Gameplay" && System.IO.File.Exists(customArenaFlag))
         {

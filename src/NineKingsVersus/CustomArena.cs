@@ -19,10 +19,15 @@ internal static class CustomArena
         public Image Image;
         public bool Enemy;
         public float Hp;
+        public float MaxHp;
         public float Damage;
         public float Speed;
         public float Range;
         public float Cooldown;
+        public float AttackInterval;
+        public float CritChance;
+        public float CritMultiplier;
+        public bool Ranged;
         public Color BaseColor;
     }
 
@@ -142,18 +147,25 @@ internal static class CustomArena
 
             var delta = target.Rect.anchoredPosition - attacker.Rect.anchoredPosition;
             var distance = delta.magnitude;
+            var desiredRange = attacker.Ranged ? attacker.Range * 0.8f : attacker.Range;
             if (distance > attacker.Range)
             {
                 attacker.Rect.anchoredPosition += delta.normalized * (attacker.Speed * dt);
+            }
+            else if (attacker.Ranged && distance < desiredRange)
+            {
+                attacker.Rect.anchoredPosition -= delta.normalized * (attacker.Speed * dt);
             }
             else
             {
                 attacker.Cooldown -= dt;
                 if (attacker.Cooldown <= 0f)
                 {
-                    attacker.Cooldown = 1f;
-                    target.Hp -= attacker.Damage;
-                    var ratio = Mathf.Clamp01(target.Hp / 100f);
+                    attacker.Cooldown = attacker.AttackInterval;
+                    var crit = UnityEngine.Random.value < attacker.CritChance;
+                    var hit = attacker.Damage * (crit ? attacker.CritMultiplier : 1f);
+                    target.Hp -= (float)hit;
+                    var ratio = Mathf.Clamp01(target.Hp / Mathf.Max(1f, target.MaxHp));
                     target.Image.color = Color.Lerp(new Color(0.25f, 0.25f, 0.25f, 1f), target.BaseColor, ratio);
                     if (target.Hp <= 0)
                     {
@@ -170,45 +182,121 @@ internal static class CustomArena
 
     private static void SpawnArmy(Gameplay.GameSnapshot snapshot, bool enemy, float startX)
     {
-        var count = 0;
-        if (snapshot?.Areas != null)
+        if (snapshot?.Areas == null)
         {
-            for (var i = 0; i < snapshot.Areas.Count; i++)
+            return;
+        }
+
+        var index = 0;
+        for (var areaIndex = 0; areaIndex < snapshot.Areas.Count; areaIndex++)
+        {
+            var area = snapshot.Areas[areaIndex];
+            if (area == null || area.PlacedEntityType != "Troop" ||
+                string.IsNullOrEmpty(area.PlacedCardName))
             {
-                var area = snapshot.Areas[i];
-                if (area != null && area.PlacedEntityType == "Troop" &&
-                    !string.IsNullOrEmpty(area.PlacedCardName))
+                continue;
+            }
+
+            var stats = area.Stats;
+            Dictionary<string, double> catalog = null;
+            TroopCatalog.TryGet(area.PlacedCardName, out catalog);
+            var hpFallback = Mathf.Max(20f, Stat(stats, "MaxHP", 50f) * (1f + 0.15f * (area.CardLevel - 1)));
+            var strengthFallback = Stat(stats, "Strength", 12f) * 0.35f * (1f + 0.1f * (area.CardLevel - 1));
+            var speedFallback = Stat(stats, "WalkSpeed", 1f) * 70f;
+            var attackFallback = Stat(stats, "AttackSpeed", 0.5f);
+            var critChanceFallback = Stat(stats, "CritChance", 0f);
+            var critMultFallback = Stat(stats, "CritMultiplier", 1.5f);
+            var projectilesFallback = Stat(stats, "Projectiles", 0f);
+
+            var maxHp = Mathf.Max(20f, CatalogStat(catalog, hpFallback, "maxhp", "health", "hp"));
+            var damage = Mathf.Max(3f, CatalogStat(catalog, strengthFallback, "strength", "damage", "attack"));
+            var speed = Mathf.Clamp(CatalogStat(catalog, speedFallback, "walkspeed", "speed", "movespeed") * 70f, 25f, 180f);
+            var attackInterval = Mathf.Clamp(1f / Mathf.Max(0.2f, CatalogStat(catalog, attackFallback, "attackspeed", "attacks")), 0.4f, 2.5f);
+            var critChance = Mathf.Clamp01(CatalogStat(catalog, critChanceFallback, "crit_chance", "critchance"));
+            var critMultiplier = Mathf.Max(1f, CatalogStat(catalog, critMultFallback, "crit_multiplier", "critmultiplier"));
+            var ranged = CatalogStat(catalog, projectilesFallback, "projectiles", "range") > 0f;
+            var size = Mathf.Clamp(Stat(area, "EntitySize", 1f) * 16f, 14f, 34f);
+            var count = Mathf.Clamp(area.TroopQuantity / 9, 1, 3);
+
+            var sideColor = enemy
+                ? new Color(0.9f, 0.25f, 0.2f, 1f)
+                : new Color(0.25f, 0.55f, 1f, 1f);
+            var color = Color.Lerp(sideColor, Color.white,
+                Mathf.Repeat(area.PlacedCardName.GetHashCode() / 1000f, 0.35f));
+
+            for (var n = 0; n < count; n++)
+            {
+                var go = new GameObject("Fighter");
+                go.AddComponent<RectTransform>();
+                go.transform.SetParent(_panel, false);
+                var rect = go.GetComponent<RectTransform>();
+                rect.sizeDelta = new Vector2(size, size);
+                rect.anchoredPosition = new Vector2(startX, (index - 6f) * 28f);
+                var image = go.AddComponent<Image>();
+                image.color = color;
+                Fighters.Add(new Fighter
                 {
-                    count++;
+                    Rect = rect,
+                    Image = image,
+                    Enemy = enemy,
+                    Hp = maxHp,
+                    MaxHp = maxHp,
+                    Damage = damage,
+                    Speed = speed,
+                    Range = ranged ? 170f : 30f,
+                    AttackInterval = attackInterval,
+                    CritChance = critChance,
+                    CritMultiplier = critMultiplier,
+                    Ranged = ranged,
+                    BaseColor = color,
+                });
+                index++;
+            }
+        }
+    }
+
+    private static float CatalogStat(Dictionary<string, double> values, float fallback, params string[] keywords)
+    {
+        if (values == null)
+        {
+            return fallback;
+        }
+
+        foreach (var keyword in keywords)
+        {
+            foreach (var pair in values)
+            {
+                if (pair.Key.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return (float)pair.Value;
                 }
             }
         }
 
-        count = Mathf.Clamp(count, 5, 20);
-        for (var i = 0; i < count; i++)
+        return fallback;
+    }
+
+    private static float Stat(object source, string name, float fallback)
+    {
+        if (source == null)
         {
-            var go = new GameObject("Fighter");
-            go.AddComponent<RectTransform>();
-            go.transform.SetParent(_panel, false);
-            var rect = go.GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(22f, 22f);
-            rect.anchoredPosition = new Vector2(startX, (i - count / 2f) * 26f);
-            var image = go.AddComponent<Image>();
-            var color = enemy
-                ? new Color(0.9f, 0.25f, 0.2f, 1f)
-                : new Color(0.25f, 0.55f, 1f, 1f);
-            image.color = color;
-            Fighters.Add(new Fighter
-            {
-                Rect = rect,
-                Image = image,
-                Enemy = enemy,
-                Hp = 100,
-                Damage = 14,
-                Speed = 90,
-                Range = 26,
-                BaseColor = color,
-            });
+            return fallback;
+        }
+
+        try
+        {
+            var type = source.GetType();
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+            var member = (object)type.GetProperty(name, flags) ?? type.GetField(name, flags);
+            var value = member is System.Reflection.PropertyInfo property
+                ? property.GetValue(source)
+                : (member as System.Reflection.FieldInfo)?.GetValue(source);
+            return value == null ? fallback : Convert.ToSingle(value);
+        }
+        catch
+        {
+            return fallback;
         }
     }
 
