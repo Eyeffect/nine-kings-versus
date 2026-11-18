@@ -124,6 +124,17 @@ Decision: stop iterating on this prototype. The LAN transport, native in-game me
 - `MultiplayerGameSnapshots.GetWaveSnapshot` (0x1808094C0) searches the snapshot list by wave number, with a separate comparator path when `fetchClosestPreviousSnapshot` is true.
 - `Core.Wave.OnCompleteGame(EndUIType)` is the official end-screen entry; Victory=0, VictoryYear99=1, Defeat=2.
 
+## Two-process validation of opponent decks
+
+Ran both copies hidden with flags: attach-flow, single-load, auto-versus, custom-deck.
+Both peers exchanged snapshots, installed a runtime opponent deck on the wave king and all enemy kings (8 battlers each), and spawned **45 entities flagged `IsMultiplayerEnemy=True` on each side** through the game's own enemy path.
+
+Result: host lost (`1930` vs `2674` strength), join won. Both called `Core.Wave.OnCompleteGame` with Defeat/Victory respectively. The join's first call hit a LocalLow settings-file sharing conflict; the delayed retry succeeded (`OnCompleteGame(Victory)` logged).
+
+This is the first end-to-end two-process run where each side fights an army built from the other side's kingdom, using the game's own troop spawning and AI.
+
+Caveats: winner is still chosen by kingdom strength rather than combat outcome; after the end screen the battle is frozen (45 enemies remain alive), which is expected once a result is applied.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
