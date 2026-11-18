@@ -204,26 +204,7 @@ internal static class VersusNativeMenu
                     }
                     else if (action == "HOST" || action == "JOIN")
                     {
-                        var mode = action == "HOST" ? "host" : "join";
-                        var path = Path.Combine(VersusPlugin.DataDir, "net.json");
-                        var peer = "127.0.0.1";
-                        var port = 28764;
-                        if (File.Exists(path))
-                        {
-                            try
-                            {
-                                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
-                                if (doc.RootElement.TryGetProperty("peer", out var p))
-                                {
-                                    peer = p.GetString() ?? peer;
-                                }
-                            }
-                            catch
-                            {
-                            }
-                        }
-
-                        File.WriteAllText(path, $"{{\"mode\":\"{mode}\",\"peer\":\"{peer}\",\"port\":{port}}}");
+                        VersusBehaviour.StartVersusMatch(action == "HOST" ? "host" : "join");
                     }
                     else if (action == "START BATTLE")
                     {

@@ -437,6 +437,13 @@ public sealed class VersusBehaviour : MonoBehaviour
         // attach-flow: load the hub scene so MultiplayerManager.Instance exists, attach
         // the probe session there, then start a run through Core.Wave.StartNewGame with
         // its own isMultiplayer=true parameter (avoids flipping IsMultiplayer mid-run).
+        var menuStart = System.IO.Path.Combine(VersusPlugin.DataDir, "menu-start-host");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(menuStart))
+        {
+            System.IO.File.Delete(menuStart);
+            StartVersusMatch("host");
+        }
+
         var attachFlow = System.IO.Path.Combine(VersusPlugin.DataDir, "attach-flow");
         if (_lastScene == "MainMenu" && System.IO.File.Exists(attachFlow))
         {
@@ -1583,6 +1590,42 @@ public sealed class VersusBehaviour : MonoBehaviour
     /// StartWave for a wave is allowed (the game otherwise re-issues rewards and
     /// floods the hand); after a match result no further waves may start.
     /// </summary>
+    public static void StartVersusMatch(string mode)
+    {
+        try
+        {
+            var path = Path.Combine(VersusPlugin.DataDir, "net.json");
+            var peer = "127.0.0.1";
+            var port = 28764;
+            if (File.Exists(path))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+                    if (doc.RootElement.TryGetProperty("peer", out var p))
+                    {
+                        peer = p.GetString() ?? peer;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            File.WriteAllText(path, $"{{\"mode\":\"{mode}\",\"peer\":\"{peer}\",\"port\":{port}}}");
+            _attachFlowPending = true;
+            VersusPlugin.Log.LogInfo($"menu: starting versus match as {mode}");
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "MainMenu")
+            {
+                UnityEngine.SceneManagement.SceneManager.LoadScene(9);
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"menu start failed: {e.Message}");
+        }
+    }
+
     public static bool ResultPending()
     {
         return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0;
