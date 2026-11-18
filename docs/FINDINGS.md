@@ -221,7 +221,7 @@ Remaining: the preview is currently triggered once at startup rather than refres
 - `m_Holder`, `m_HolderRectTransform`, `m_HolderLayoutGroup`
 - `m_PreviewedEnemyPlayerId`, `m_UseExpandedLayout`, `m_OnFaceClicked`
 
-`PopulateEnemyFaces(MultiplayerRunData[] runs, Action<MultiplayerRunData> onFaceClicked, Func<bool> canInteractWithFaces)` clears the face list/dictionaries, stores the callbacks, empties the holder, then (when runs exist) splits runs into local-player vs enemy using `GameplayData+0x140` and each run's `kingId`, instantiating faces from `m_UserFaceTemplate` and filling the dictionaries via `TryResolveKing`. `UpdateFaces()` refreshes them on wave begin/end. This is the left-side avatar bar.
+`PopulateEnemyFaces(MultiplayerRunData[] runs, Action<MultiplayerRunData> onFaceClicked, Func<bool> canInteractWithFaces)` clears the face list/dictionaries, stores the callbacks, empties the holder, then (when runs exist) splits runs into local-player vs enemy using `GameplayData+0x140` and each run's `kingId`, instantiating faces from `m_UserFaceTemplate` and filling the dictionaries via `TryResolveKing`. `UpdateFaces()` refreshes them on wave begin/end. This is the right-side avatar bar.
 
 Attempted to call it from the probe with session runs, real managed delegates, and `Show()` first; it still throws NRE inside the method — most likely because `m_UserFaceTemplate`/holder are only initialized by the real multiplayer start path from the hub. Building the avatar bar will require either reproducing that initialization or rendering our own equivalent with the game's face sprites.
 
@@ -231,7 +231,7 @@ For "bots with real bases": the session can carry a run per king (already implem
 
 Added `OpponentDeck.InstallBots()` behind a `multi-bot` flag. It iterates `Core.Wave.GetEnemyKings()`, resolves each king's run via `Session.GetDataByPlayerKing(king.Owner)`, builds a separate runtime `DeckSo` from that run's wave snapshot, and installs it at `KingSo + 0x1F8`. The deck list is refactored into `BuildDeck(snapshot)` reused by both single-opponent and multi-bot paths.
 
-Single-process validation: `bots: installed 5 distinct bot decks`. So a match can now have several AI opponents, each fighting with an army built from its own snapshot. The avatar bar (`PopulateEnemyFaces`) still throws NRE from the probe path, so the left-side avatar UI remains unimplemented.
+Single-process validation: `bots: installed 5 distinct bot decks`. So a match can now have several AI opponents, each fighting with an army built from its own snapshot. The avatar bar (`PopulateEnemyFaces`) still throws NRE from the probe path, so the right-side avatar UI remains unimplemented.
 
 ## Clean-arena branch (result)
 
