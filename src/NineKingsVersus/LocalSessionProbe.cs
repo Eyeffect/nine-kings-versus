@@ -517,6 +517,35 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
+    /// Returns the best available opponent snapshot: live LAN state first, then
+    /// the attached session's gauntlet run, then the injected static snapshot.
+    /// </summary>
+    public static Gameplay.GameSnapshot GetOpponentSnapshot()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
+            {
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(VersusNet.OpponentSnapshotJson);
+            }
+
+            var session = MultiplayerManager.Session;
+            var run = session?.GauntletEnemies != null && session.GauntletEnemies.Count > 0
+                ? session.GauntletEnemies[0]
+                : null;
+            var wave = Core.Wave.Data?.Wave ?? -1;
+            return run?.snapshot?.GetWaveSnapshot(wave, true)
+                ?? run?.snapshot?.FinalSnapshot
+                ?? Core.Wave.CurrentMultiplayerEnemySnapshot;
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"opponent snapshot failed: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Recreates the opponent's board on the multiplayer side using the game's own
     /// SetMultiplayerCard/SetMultiplayerLife console commands, one command per placed
     /// card in the opponent snapshot. This is the missing step that makes the enemy
@@ -586,6 +615,93 @@ internal static class LocalSessionProbe
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"build-enemy failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Probe the enemy-spawn API with troops resolved from a snapshot. Goal of the
+    /// arena milestone: spawn the opponent's army into a single scene.
+    /// </summary>
+    public static void SpawnProbe()
+    {
+        try
+        {
+            var wave = Core.Wave.Instance;
+            if (wave == null)
+            {
+                VersusPlugin.Log.LogWarning("spawn-probe: no wave instance");
+                return;
+            }
+
+            var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
+            Array.Sort(files, StringComparer.Ordinal);
+            if (files.Length == 0)
+            {
+                VersusPlugin.Log.LogWarning("spawn-probe: no snapshot");
+                return;
+            }
+
+            var snapshot = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(File.ReadAllText(files[^1]));
+            var types = new Il2CppSystem.Collections.Generic.List<Core.Itens.TroopSo>();
+            if (snapshot?.Areas != null)
+            {
+                foreach (var area in snapshot.Areas)
+                {
+                    if (area == null || string.IsNullOrEmpty(area.PlacedCardName) || area.PlacedEntityType != "Troop")
+                    {
+                        continue;
+                    }
+
+                    var troop = Core.Game.GetTroop(area.PlacedCardName);
+                    if (troop != null)
+                    {
+                        types.Add(troop);
+                        VersusPlugin.Log.LogInfo($"spawn-probe: resolved '{area.PlacedCardName}' quantity={area.TroopQuantity}");
+                    }
+                    else
+                    {
+                        VersusPlugin.Log.LogWarning($"spawn-probe: unresolved troop '{area.PlacedCardName}'");
+                    }
+                }
+            }
+
+            VersusPlugin.Log.LogInfo($"spawn-probe: resolvedTypes={types.Count}");
+
+            var method = typeof(Core.Wave).GetMethods(
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance)
+                .FirstOrDefault(m => m.Name == "CreateEnemies");
+            if (method == null)
+            {
+                VersusPlugin.Log.LogWarning("spawn-probe: CreateEnemies not found");
+                return;
+            }
+
+            foreach (var p in method.GetParameters())
+            {
+                VersusPlugin.Log.LogInfo($"spawn-probe: param {p.Position} {p.ParameterType.FullName} {p.Name}");
+            }
+
+            var enemies = new Il2CppSystem.Collections.Generic.List<Core.Entities.Troop>();
+            var baseGo = Core.Wave.MultiplayerEnemyBase;
+            var position = baseGo == null ? UnityEngine.Vector2.zero : new UnityEngine.Vector2(baseGo.transform.position.x, baseGo.transform.position.y);
+            var args = new object[] { position, null, types, enemies };
+            var before = UnityEngine.Object.FindObjectsOfType<Core.Entities.Entity>()?.Length ?? 0;
+            if (method.IsStatic)
+            {
+                method.Invoke(null, args);
+            }
+            else
+            {
+                method.Invoke(wave, args);
+            }
+
+            var after = UnityEngine.Object.FindObjectsOfType<Core.Entities.Entity>()?.Length ?? 0;
+            VersusPlugin.Log.LogInfo($"spawn-probe: CreateEnemies invoked; entities {before} -> {after}, enemies={enemies.Count}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"spawn-probe failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
         }
     }
 

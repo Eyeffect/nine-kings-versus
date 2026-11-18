@@ -24,12 +24,14 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static bool _attachDone;
     private static float _verifyAt = -1f;
     private static float _secondBattleAt = -1f;
+    private static float _handTrimAt = -1f;
     private static int _lastNetStateVersion;
     private static int _handshakeWave = -1;
     private static bool _readySent;
     private static bool _goSent;
     private static bool _autoStarted;
     private static bool _resultHandled;
+    private static int _localEliminatedWave = -1;
     private static int _verifySamples;
     private float _autoAt = -1f;
     private static float _attachRetryAt = -1f;
@@ -74,6 +76,27 @@ public sealed class VersusBehaviour : MonoBehaviour
             {
                 VersusPlugin.Log.LogInfo("net: rebuilding opponent board from peer state");
                 LocalSessionProbe.BuildEnemyBoard();
+            }
+        }
+
+        // The game re-issues rewards when StartWave is repeated; keep the hand from
+        // flooding so combat remains playable in arena mode.
+        if (_lastScene == "Gameplay" && Time.time >= _handTrimAt &&
+            System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
+        {
+            _handTrimAt = Time.time + 4f;
+            try
+            {
+                var hand = GameplayInterface.GameplayUI.HandCards;
+                if (hand != null && hand.CardsCount > 2)
+                {
+                    VersusPlugin.Log.LogInfo($"arena: trimming flooded hand from {hand.CardsCount} to 0");
+                    hand.Clear();
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"arena hand trim failed: {e.Message}");
             }
         }
 
@@ -282,6 +305,14 @@ public sealed class VersusBehaviour : MonoBehaviour
             {
                 VersusPlugin.Log.LogWarning($"build-enemy flag failed: {e.GetType().Name}: {e.Message}");
             }
+        }
+
+        // spawn-probe: test the custom-arena army spawner with snapshot troops.
+        var spawnProbe = System.IO.Path.Combine(VersusPlugin.DataDir, "spawn-probe");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(spawnProbe))
+        {
+            System.IO.File.Delete(spawnProbe);
+            LocalSessionProbe.SpawnProbe();
         }
 
         // inspect-spawn: one-shot dump of spawn API types and writability.
@@ -1050,8 +1081,57 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             var myLives = VersusNet.LocalLives;
             var peerLives = VersusNet.PeerLives;
+            var wave = Core.Wave.Data?.Wave ?? -1;
 
-            if (VersusNet.Mode == "host")
+            // Arena result: the side whose opponent army was wiped out loses.
+            var liveEnemies = 0;
+            var entities = UnityEngine.Object.FindObjectsOfType<Core.Entities.Entity>();
+            if (entities != null)
+            {
+                foreach (var entity in entities)
+                {
+                    try
+                    {
+                        if (entity != null && entity.IsEnemy)
+                        {
+                            liveEnemies++;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            if (!_resultHandled && wave > 0 && ArenaSpawner.LastSpawnWave == wave &&
+                ArenaSpawner.LastSpawned > 0 && liveEnemies == 0 &&
+                _localEliminatedWave != wave)
+            {
+                _localEliminatedWave = wave;
+                VersusPlugin.Log.LogInfo($"arena: opponent army eliminated locally at wave {wave}");
+
+                if (VersusNet.Mode == "host")
+                {
+                    _resultHandled = true;
+                    VersusNet.SendResult(1);
+                    ApplyMatchResult(1);
+                    return;
+                }
+
+                VersusNet.SendEliminated(wave);
+            }
+
+            if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
+                VersusNet.PeerEliminatedWave == wave)
+            {
+                _resultHandled = true;
+                VersusPlugin.Log.LogInfo($"arena: peer eliminated at wave {wave}, host loses");
+                VersusNet.SendResult(0);
+                ApplyMatchResult(0);
+                return;
+            }
+
+            if (VersusNet.Mode == "host" && !System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
             {
                 if (!_resultHandled && myLives >= 0 && peerLives >= 0 && myLives != peerLives)
                 {

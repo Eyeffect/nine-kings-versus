@@ -35,6 +35,7 @@ internal static class VersusNet
         public string snapshot { get; set; }
         public int lives { get; set; } = -1;
         public int loser { get; set; } = -1;
+        public int eliminated { get; set; } = -1;
     }
 
     private static readonly object Lock = new();
@@ -51,6 +52,7 @@ internal static class VersusNet
     private static int _incomingGoWave = -1;
     private static int _incomingLives = -1;
     private static int _incomingLoser = -1;
+    private static int _incomingEliminated = -1;
     private static int _stateVersion;
 
     public static string Mode { get; private set; } = "off";
@@ -81,6 +83,9 @@ internal static class VersusNet
 
     /// <summary>Host-authoritative loser (0=host, 1=join), or -1.</summary>
     public static int ResultLoser { get; private set; } = -1;
+
+    /// <summary>Wave at which the peer's army was destroyed, or -1.</summary>
+    public static int PeerEliminatedWave { get; private set; } = -1;
 
     public static void Init()
     {
@@ -135,6 +140,7 @@ internal static class VersusNet
         int goWave;
         int lives;
         int loser;
+        int eliminated;
 
         lock (Lock)
         {
@@ -144,10 +150,12 @@ internal static class VersusNet
             goWave = _incomingGoWave;
             lives = _incomingLives;
             loser = _incomingLoser;
+            eliminated = _incomingEliminated;
             _incomingState = null;
             _incomingReadyWave = -1;
             _incomingGoWave = -1;
             _incomingLoser = -1;
+            _incomingEliminated = -1;
         }
 
         if (state != null)
@@ -180,6 +188,12 @@ internal static class VersusNet
             ResultLoser = loser;
             VersusPlugin.Log.LogInfo($"net: authoritative result loser={(loser == 0 ? "host" : "join")}");
         }
+
+        if (eliminated >= 0)
+        {
+            PeerEliminatedWave = eliminated;
+            VersusPlugin.Log.LogInfo($"net: peer army eliminated at wave {eliminated}");
+        }
     }
 
     public static void SendState(int wave, string snapshotJson, int lives)
@@ -200,6 +214,11 @@ internal static class VersusNet
     public static void SendResult(int loser)
     {
         Send(new Message { type = "result", loser = loser });
+    }
+
+    public static void SendEliminated(int wave)
+    {
+        Send(new Message { type = "eliminated", wave = wave, eliminated = wave });
     }
 
     public static void Stop()
@@ -347,6 +366,7 @@ internal static class VersusNet
                         snapshot = root.TryGetProperty("snapshot", out var snapshot) ? snapshot.GetString() : null,
                         lives = root.TryGetProperty("lives", out var lives) ? lives.GetInt32() : -1,
                         loser = root.TryGetProperty("loser", out var loser) ? loser.GetInt32() : -1,
+                        eliminated = root.TryGetProperty("eliminated", out var eliminatedValue) ? eliminatedValue.GetInt32() : -1,
                     };
                 }
                 catch (Exception e)
@@ -376,6 +396,9 @@ internal static class VersusNet
                             break;
                         case "result":
                             _incomingLoser = message.loser;
+                            break;
+                        case "eliminated":
+                            _incomingEliminated = message.eliminated >= 0 ? message.eliminated : message.wave;
                             break;
                     }
                 }

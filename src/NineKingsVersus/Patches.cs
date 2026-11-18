@@ -174,11 +174,18 @@ internal static class Patches
     [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.SpawnWave))]
     internal static class SpawnWavePatch
     {
+        private static int _arenaSpawnedWave = -1;
+
         private static void Prefix()
         {
             try
             {
                 LocalSessionProbe.EnsureEnemySnapshot("SpawnWave");
+                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")))
+                {
+                    ArenaSpawner.SuppressLocalWaveEnemies();
+                }
+
                 var data = Core.Wave.Data;
                 var session = MultiplayerSystems.MultiplayerManager.Session;
                 VersusPlugin.Log.LogInfo(
@@ -224,6 +231,21 @@ internal static class Patches
                 VersusPlugin.Log.LogInfo(
                     $"SpawnWave out: entities={entities?.Length ?? 0} enemy={enemy} multiplayerEnemy={multiplayerEnemy} " +
                     $"waveTroops={Core.Wave.WaveTroops?.Length ?? -1} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
+
+                var wave = Core.Wave.Data?.Wave ?? -1;
+                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && _arenaSpawnedWave != wave)
+                {
+                    _arenaSpawnedWave = wave;
+                    var opponent = LocalSessionProbe.GetOpponentSnapshot();
+                    if (opponent != null)
+                    {
+                        ArenaSpawner.SpawnOpponentArmy(opponent);
+                    }
+                    else
+                    {
+                        VersusPlugin.Log.LogWarning("arena: no opponent snapshot available for army");
+                    }
+                }
             }
             catch (Exception e)
             {

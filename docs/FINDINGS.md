@@ -73,11 +73,21 @@ A host/join transport was built and verified with two real processes:
 - Repeated `StartWave` calls can re-issue rewards and flood the hand (18 cards
   observed). Suppressing those calls breaks the wave flow, so this is unresolved.
 
-## Conclusion
+## Arena milestone progress
 
-The async gauntlet pipeline records local progress and resolves opponents on the
-server; it does not provide an offline path that constructs a live enemy base.
-Feeding snapshots into it produces in-memory enemy entities but no visible base
-or army. A true simultaneous 1v1 needs a custom arena: resolve both players'
-`TroopSo` types by name (`Core.Game.GetTroop(name)`), spawn both armies into one
-scene through the existing spawn API, and keep the shared result authority.
+A custom arena spawner was added (`ArenaSpawner.cs`): opponent troop cards are
+resolved with `Core.Game.GetTroop(name)` and spawned through the game's
+`Wave.SpawnBattlers` path, then registered in `Wave.Enemies` and
+`Wave.EnemyMeleeTroops`. About 25 opponent entities per side spawn from a
+snapshot (75 spawn attempts succeed ~1 in 3). Normal wave enemies are despawned
+first. `Troop.SpawnInBattle` was also tried but NREs with the available area.
+
+Two-process tests with distinct kingdoms now produce a single shared result:
+the host destroys the join army and both peers apply host victory / join defeat.
+The life-based result path is disabled in arena mode. Spawn position now uses
+the right-side formation transform rather than the base centre, and the hand is
+periodically trimmed to prevent reward flooding.
+
+Still unresolved: spawned troops do not reliably target each other; they can
+beeline for the base, and the base slowly kills them. Faction masks/AI setup
+still need work.
