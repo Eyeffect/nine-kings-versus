@@ -161,6 +161,12 @@ internal static class VersusNativeMenu
                 return;
             }
 
+            _mainPanel = menu._mainMenuPanel;
+            if (_mainPanel?.holder != null)
+            {
+                _mainPanel.holder.gameObject.SetActive(false);
+            }
+
             var labels = new System.Collections.Generic.Dictionary<Button, string>
             {
                 { panel.continueBtn, "CLOSE" },
@@ -191,6 +197,10 @@ internal static class VersusNativeMenu
                     if (action == "CLOSE")
                     {
                         panel.HidePanel();
+                        if (_mainPanel?.holder != null)
+                        {
+                            _mainPanel.holder.gameObject.SetActive(true);
+                        }
                     }
                     else if (action == "HOST" || action == "JOIN")
                     {
@@ -238,6 +248,7 @@ internal static class VersusNativeMenu
     }
 
     private static readonly System.Collections.Generic.List<object> _nativeListeners = new System.Collections.Generic.List<object>();
+    private static MainMenuUI.MainMenuUI_Main.MainMenuPanel _mainPanel;
 
     private static void ApplyFlag(string name, bool enabled)
     {
