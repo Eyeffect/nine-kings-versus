@@ -25,6 +25,9 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static float _verifyAt = -1f;
     private static float _secondBattleAt = -1f;
     private static float _handTrimAt = -1f;
+    private static float _diagAt = -1f;
+    private static float _syncAt = -1f;
+    private static int _lastSyncedTo = -1;
     private static int _lastNetStateVersion;
     private static int _handshakeWave = -1;
     private static bool _readySent;
@@ -66,6 +69,50 @@ public sealed class VersusBehaviour : MonoBehaviour
         TrackScene();
         VersusNet.Tick();
 
+        var dumpMenu = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-menu");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(dumpMenu))
+        {
+            System.IO.File.Delete(dumpMenu);
+            try
+            {
+                var buttons = UnityEngine.Object.FindObjectsOfType<UnityEngine.UI.Button>();
+                VersusPlugin.Log.LogInfo($"dump-menu: buttons={buttons?.Length ?? 0}");
+                if (buttons != null)
+                {
+                    foreach (var button in buttons)
+                    {
+                        if (button == null)
+                        {
+                            continue;
+                        }
+
+                        var label = button.GetComponentInChildren<UnityEngine.UI.Text>();
+                        VersusPlugin.Log.LogInfo(
+                            $"dump-menu: button '{button.name}' label='{(label == null ? "" : label.text)}' " +
+                            $"parent='{PathOf(button.transform)}' active={button.gameObject.activeInHierarchy}");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"dump-menu failed: {e.Message}");
+            }
+        }
+
+        if (_lastScene == "MainMenu")
+        {
+            VersusNativeMenu.TryInstallMainMenuButton();
+        }
+
+        var menuFlag = System.IO.Path.Combine(VersusPlugin.DataDir, "menu");
+        if (System.IO.File.Exists(menuFlag))
+        {
+            System.IO.File.Delete(menuFlag);
+            VersusNativeMenu.Toggle();
+        }
+
+        VersusNativeMenu.Refresh();
+
         // Rebuild the opponent's board when a fresh state arrives and the run is not
         // mid-combat (rebuilding during combat would despawn the fighting units).
         if (VersusNet.StateVersion != _lastNetStateVersion)
@@ -76,6 +123,80 @@ public sealed class VersusBehaviour : MonoBehaviour
             {
                 VersusPlugin.Log.LogInfo("net: rebuilding opponent board from peer state");
                 LocalSessionProbe.BuildEnemyBoard();
+            }
+        }
+
+        if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
+            && Time.time >= _syncAt && !_resultHandled)
+        {
+            _syncAt = Time.time + 5f;
+            var waveNow = Core.Wave.Data.Wave;
+            if (VersusNet.Mode == "host")
+            {
+                VersusNet.SendHostWave(waveNow);
+            }
+            else if (VersusNet.HostWave > 0 && VersusNet.HostWave != waveNow && _lastSyncedTo != VersusNet.HostWave)
+            {
+                _lastSyncedTo = VersusNet.HostWave;
+                VersusPlugin.Log.LogInfo($"sync: join SetWave from {waveNow} to host wave {_lastSyncedTo}");
+                Core.Wave.SetWave(_lastSyncedTo, true, false, false);
+            }
+        }
+
+        if (_lastScene == "Gameplay" && Time.time >= _diagAt &&
+            System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
+        {
+            _diagAt = Time.time + 5f;
+            try
+            {
+                var data = Core.Wave.Data;
+                var entities = UnityEngine.Object.FindObjectsOfType<Core.Entities.Entity>();
+                var enemies = 0;
+                var players = 0;
+                var multiplayer = 0;
+                if (entities != null)
+                {
+                    foreach (var entity in entities)
+                    {
+                        try
+                        {
+                            if (entity == null)
+                            {
+                                continue;
+                            }
+
+                            if (entity.IsEnemy)
+                            {
+                                enemies++;
+                            }
+                            else
+                            {
+                                players++;
+                            }
+
+                            if (entity.IsMultiplayerEnemy)
+                            {
+                                multiplayer++;
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
+                VersusPlugin.Log.LogInfo(
+                    $"diag: wave={data?.Wave} running={data?.Running} combatOn={data?.CombatOn} " +
+                    $"waitingToBegin={data?.WaitingToBegin} waitingForEnemies={data?.waitingForEnemiesToSpawn} " +
+                    $"entities={entities?.Length ?? 0} players={players} enemies={enemies} multiplayer={multiplayer} " +
+                    $"arenaSpawned={ArenaSpawner.LastSpawned} arenaWave={ArenaSpawner.LastSpawnWave} " +
+                    $"lives={VersusNet.LocalLives}/{VersusNet.PeerLives} states={VersusNet.StateVersion} " +
+                    $"resultHandled={_resultHandled} eliminatedWave={_localEliminatedWave} " +
+                    $"waveEnemies={Core.Wave.Enemies?.Count.ToString() ?? "null"} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"diag failed: {e.Message}");
             }
         }
 
@@ -193,7 +314,8 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
-            && System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")))
+            && (System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")) ||
+                System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena"))))
         {
             MatchResultStep();
         }
@@ -499,6 +621,12 @@ public sealed class VersusBehaviour : MonoBehaviour
                       && keyboard[UnityEngine.InputSystem.Key.LeftAlt].isPressed;
         if (!ctrlAlt)
         {
+            return;
+        }
+
+        if (keyboard[UnityEngine.InputSystem.Key.F11].wasPressedThisFrame)
+        {
+            VersusNativeMenu.Toggle();
             return;
         }
 
@@ -1104,7 +1232,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
 
             if (!_resultHandled && wave > 0 && ArenaSpawner.LastSpawnWave == wave &&
-                ArenaSpawner.LastSpawned > 0 && liveEnemies == 0 &&
+                ArenaSpawner.LastSpawned > 0 && liveEnemies <= 3 &&
                 _localEliminatedWave != wave)
             {
                 _localEliminatedWave = wave;
@@ -1131,7 +1259,7 @@ public sealed class VersusBehaviour : MonoBehaviour
                 return;
             }
 
-            if (VersusNet.Mode == "host" && !System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
+            if (VersusNet.Mode == "host")
             {
                 if (!_resultHandled && myLives >= 0 && peerLives >= 0 && myLives != peerLives)
                 {
@@ -1177,7 +1305,9 @@ public sealed class VersusBehaviour : MonoBehaviour
     /// </summary>
     public static bool ClaimStartWave()
     {
-        if (!System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")))
+        var active = System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")) ||
+                     System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena"));
+        if (!active)
         {
             return true;
         }
@@ -1189,6 +1319,46 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         return true;
+    }
+
+    public static string MenuStartBattle()
+    {
+        try
+        {
+            BeginVersusBattle("menu");
+            return "Start Battle pressed (hand cleared)";
+        }
+        catch (Exception e)
+        {
+            return $"Failed: {e.Message}";
+        }
+    }
+
+    public static string MenuBuildBoard()
+    {
+        try
+        {
+            LocalSessionProbe.BuildEnemyBoard();
+            return "Opponent board rebuild attempted";
+        }
+        catch (Exception e)
+        {
+            return $"Failed: {e.Message}";
+        }
+    }
+
+    private static string PathOf(Transform transform)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        var current = transform;
+        while (current != null)
+        {
+            parts.Add(current.name);
+            current = current.parent;
+        }
+
+        parts.Reverse();
+        return string.Join("/", parts);
     }
 
     public static void ScheduleVerification(int samples = 6)

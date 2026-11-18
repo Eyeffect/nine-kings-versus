@@ -91,3 +91,15 @@ periodically trimmed to prevent reward flooding.
 Still unresolved: spawned troops do not reliably target each other; they can
 beeline for the base, and the base slowly kills them. Faction masks/AI setup
 still need work.
+
+## Final diagnostics (with in-game menu build)
+
+Added a 5-second `diag:` log and native UGUI menu (main-menu VERSUS button, plus Ctrl+Alt+F11).
+Observed on two synced processes:
+
+- Waves can be synced (host/join both reached wave 17/18 after adding host-wave `sync` messages), but combat rarely enters `running=true/combatOn=true` for long.
+- `arenaSpawned=15 arenaWave=15` stayed stale across later waves: the custom army spawn only happened at the initial wave. Later enemy entities came from SetMultiplayerCard board rebuilds, not the arena spawner.
+- Lives stayed 2/2 on both peers, so the life-based result never fired. Army elimination also never reached zero (54 enemy entities persisted), so the arena result never fired either.
+- Troops still do not reliably target each other; they accumulate on the opponent side and the local game's own victory/defeat logic remains independent.
+
+Conclusion: the mod can load runs, exchange snapshots, sync waves, spawn some opponent troops, and draw a native menu, but it cannot yet produce a correct, synchronized 1v1 fight with a single winner. The remaining work needs a proper faction/AI setup and a result hook that replaces the game's local victory logic, which requires deeper engine work than the async-gauntlet reuse path allows.

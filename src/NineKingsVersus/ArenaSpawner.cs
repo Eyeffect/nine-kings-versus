@@ -15,6 +15,77 @@ internal static class ArenaSpawner
 {
     private static System.Reflection.MethodInfo _createEnemies;
     private static bool _spawnFailureLogged;
+    private static System.Collections.Generic.Dictionary<string, object> _enemyMasks;
+
+    /// <summary>
+    /// Copies the faction/target masks from one of the game's real wave enemies
+    /// before they are despawned. Our custom troops then inherit the same masks,
+    /// so player troops and opponent troops target each other.
+    /// </summary>
+    private static void CaptureEnemyMasks()
+    {
+        if (_enemyMasks != null && _enemyMasks.Count > 0)
+        {
+            return;
+        }
+
+        _enemyMasks = null;
+        try
+        {
+            var troops = UnityEngine.Object.FindObjectsOfType<Core.Entities.Troop>();
+            Core.Entities.Troop sample = null;
+            if (troops != null)
+            {
+                foreach (var troop in troops)
+                {
+                    if (troop != null && troop.IsEnemy)
+                    {
+                        sample = troop;
+                        break;
+                    }
+                }
+            }
+
+            if (sample == null)
+            {
+                return;
+            }
+
+            _enemyMasks = new System.Collections.Generic.Dictionary<string, object>();
+            foreach (var name in new[] { "m_AlliesCheckMask", "m_EnemiesCheckMask" })
+            {
+                var field = typeof(Core.Entities.Entity).GetField(name,
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
+                if (field != null)
+                {
+                    _enemyMasks[name] = field.GetValue(sample);
+                }
+            }
+
+            VersusPlugin.Log.LogInfo($"arena: captured enemy masks from '{sample.name}' fields={_enemyMasks.Count}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"arena: mask capture failed: {e.Message}");
+        }
+    }
+
+    private static void ApplyEnemyMasks(Core.Entities.Troop troop)
+    {
+        if (_enemyMasks == null)
+        {
+            return;
+        }
+
+        foreach (var pair in _enemyMasks)
+        {
+            var field = typeof(Core.Entities.Entity).GetField(pair.Key,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
+            field?.SetValue(troop, pair.Value);
+        }
+    }
 
     /// <summary>Number of opponent entities spawned for the current wave.</summary>
     public static int LastSpawned { get; private set; }
@@ -29,6 +100,8 @@ internal static class ArenaSpawner
     {
         try
         {
+            CaptureEnemyMasks();
+
             var property = typeof(Core.Wave).GetProperty("WaveTroops",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
@@ -107,6 +180,8 @@ internal static class ArenaSpawner
                 return 0;
             }
 
+            CaptureEnemyMasks();
+
             var despawn = typeof(Core.Wave).GetMethod("DespawnWaveEnemies",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
@@ -177,8 +252,8 @@ internal static class ArenaSpawner
                 var areas = UnityEngine.Object.FindObjectsOfType<Core.Kingdoms.KingdomArea>();
                 var area = areas != null && areas.Length > 0 ? areas[0] : null;
                 var battlers = new List<Core.Entities.Troop>();
-                var attempts = types.Count * 5;
-                for (var i = 0; i < attempts; i++)
+                var maxAttempts = types.Count * 12;
+                for (var i = 0; i < maxAttempts && battlers.Count < types.Count; i++)
                 {
                     var troopType = types[i % types.Count];
                     var args = new object[]
@@ -237,6 +312,7 @@ internal static class ArenaSpawner
                         {
                         }
 
+                        ApplyEnemyMasks(troop);
                         enemiesList.Add(troop);
                         melee.Add(troop);
 
@@ -273,8 +349,8 @@ internal static class ArenaSpawner
             if (spawn != null)
             {
                 var battlers = new List<Core.Entities.Troop>();
-                var attempts = types.Count * 5;
-                for (var i = 0; i < attempts; i++)
+                var maxAttempts = types.Count * 12;
+                for (var i = 0; i < maxAttempts && battlers.Count < types.Count; i++)
                 {
                     var troopType = types[i % types.Count];
                     var oneType = new List<Core.Itens.TroopSo>();
@@ -316,6 +392,7 @@ internal static class ArenaSpawner
                         {
                         }
 
+                        ApplyEnemyMasks(troop);
                         enemiesList.Add(troop);
                         melee.Add(troop);
 

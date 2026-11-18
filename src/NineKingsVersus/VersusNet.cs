@@ -53,6 +53,7 @@ internal static class VersusNet
     private static int _incomingLives = -1;
     private static int _incomingLoser = -1;
     private static int _incomingEliminated = -1;
+    private static int _incomingHostWave = -1;
     private static int _stateVersion;
 
     public static string Mode { get; private set; } = "off";
@@ -72,6 +73,9 @@ internal static class VersusNet
 
     /// <summary>Peer's current life count, or -1 until first reported.</summary>
     public static int PeerLives { get; private set; } = -1;
+
+    /// <summary>Wave number the host reports, for keeping both copies in sync.</summary>
+    public static int HostWave { get; private set; } = -1;
 
     /// <summary>Local life count from the latest captured snapshot.</summary>
     public static int LocalLives { get; private set; } = -1;
@@ -141,6 +145,7 @@ internal static class VersusNet
         int lives;
         int loser;
         int eliminated;
+        int hostWave;
 
         lock (Lock)
         {
@@ -151,11 +156,13 @@ internal static class VersusNet
             lives = _incomingLives;
             loser = _incomingLoser;
             eliminated = _incomingEliminated;
+            hostWave = _incomingHostWave;
             _incomingState = null;
             _incomingReadyWave = -1;
             _incomingGoWave = -1;
             _incomingLoser = -1;
             _incomingEliminated = -1;
+            _incomingHostWave = -1;
         }
 
         if (state != null)
@@ -178,9 +185,10 @@ internal static class VersusNet
             VersusPlugin.Log.LogInfo($"net: peer says go for wave {goWave}");
         }
 
-        if (lives >= 0)
+        if (lives >= 0 && lives != PeerLives)
         {
             PeerLives = lives;
+            VersusPlugin.Log.LogInfo($"net: peer lives={lives}");
         }
 
         if (loser >= 0)
@@ -193,6 +201,11 @@ internal static class VersusNet
         {
             PeerEliminatedWave = eliminated;
             VersusPlugin.Log.LogInfo($"net: peer army eliminated at wave {eliminated}");
+        }
+
+        if (hostWave > 0 && hostWave != HostWave)
+        {
+            HostWave = hostWave;
         }
     }
 
@@ -219,6 +232,11 @@ internal static class VersusNet
     public static void SendEliminated(int wave)
     {
         Send(new Message { type = "eliminated", wave = wave, eliminated = wave });
+    }
+
+    public static void SendHostWave(int wave)
+    {
+        Send(new Message { type = "sync", wave = wave });
     }
 
     public static void Stop()
@@ -399,6 +417,9 @@ internal static class VersusNet
                             break;
                         case "eliminated":
                             _incomingEliminated = message.eliminated >= 0 ? message.eliminated : message.wave;
+                            break;
+                        case "sync":
+                            _incomingHostWave = message.wave;
                             break;
                     }
                 }
