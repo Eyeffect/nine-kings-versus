@@ -28,6 +28,17 @@ internal static class CustomArena
         public float CritChance;
         public float CritMultiplier;
         public bool Ranged;
+        public float FreezePower;
+        public float ThunderPower;
+        public float CombustionPower;
+        public float ExplosionPower;
+        public float SteelCoatPower;
+        public float VenomPower;
+        public float LifeSteal;
+        public float SlowUntil;
+        public float BurnStacks;
+        public float VenomStacks;
+        public float NextDot;
         public Color BaseColor;
     }
 
@@ -99,6 +110,7 @@ internal static class CustomArena
 
         if (Winner < 0)
         {
+            ApplyDots();
             StepSide(player, enemy, deltaTime);
             StepSide(enemy, player, deltaTime);
 
@@ -148,13 +160,14 @@ internal static class CustomArena
             var delta = target.Rect.anchoredPosition - attacker.Rect.anchoredPosition;
             var distance = delta.magnitude;
             var desiredRange = attacker.Ranged ? attacker.Range * 0.8f : attacker.Range;
+            var speed = attacker.Speed * (Time.time < attacker.SlowUntil ? 0.5f : 1f);
             if (distance > attacker.Range)
             {
-                attacker.Rect.anchoredPosition += delta.normalized * (attacker.Speed * dt);
+                attacker.Rect.anchoredPosition += delta.normalized * (speed * dt);
             }
             else if (attacker.Ranged && distance < desiredRange)
             {
-                attacker.Rect.anchoredPosition -= delta.normalized * (attacker.Speed * dt);
+                attacker.Rect.anchoredPosition -= delta.normalized * (speed * dt);
             }
             else
             {
@@ -164,19 +177,97 @@ internal static class CustomArena
                     attacker.Cooldown = attacker.AttackInterval;
                     var crit = UnityEngine.Random.value < attacker.CritChance;
                     var hit = attacker.Damage * (crit ? attacker.CritMultiplier : 1f);
-                    target.Hp -= (float)hit;
-                    var ratio = Mathf.Clamp01(target.Hp / Mathf.Max(1f, target.MaxHp));
-                    target.Image.color = Color.Lerp(new Color(0.25f, 0.25f, 0.25f, 1f), target.BaseColor, ratio);
-                    if (target.Hp <= 0)
-                    {
-                        VersusPlugin.Log.LogInfo(
-                            $"custom-arena: {(target.Enemy ? "enemy" : "player")} fighter destroyed");
-                        UnityEngine.Object.Destroy(target.Rect.gameObject);
-                        target.Rect = null;
-                        target.Image = null;
-                    }
+                    ApplyHit(attacker, target, hit);
                 }
             }
+        }
+    }
+
+    private static void ApplyHit(Fighter attacker, Fighter target, float hit)
+    {
+        var reduction = Mathf.Clamp01(target.SteelCoatPower / 100f);
+        var applied = hit * (1f - reduction);
+        target.Hp -= applied;
+
+        if (target.Image != null)
+        {
+            var ratio = Mathf.Clamp01(target.Hp / Mathf.Max(1f, target.MaxHp));
+            target.Image.color = Color.Lerp(new Color(0.25f, 0.25f, 0.25f, 1f), target.BaseColor, ratio);
+        }
+
+        if (attacker.LifeSteal > 0f)
+        {
+            attacker.Hp = Mathf.Min(attacker.MaxHp, attacker.Hp + applied * attacker.LifeSteal / 100f);
+        }
+
+        if (attacker.FreezePower > 0f)
+        {
+            target.SlowUntil = Time.time + Mathf.Clamp(attacker.FreezePower * 0.08f, 0.3f, 3f);
+        }
+
+        if (attacker.CombustionPower > 0f)
+        {
+            target.BurnStacks += attacker.CombustionPower;
+        }
+
+        if (attacker.VenomPower > 0f)
+        {
+            target.VenomStacks += attacker.VenomPower;
+        }
+
+        if (attacker.ThunderPower > 0f)
+        {
+            var chain = Fighters
+                .Where(f => f != target && f.Enemy == target.Enemy && f.Rect != null && f.Hp > 0)
+                .OrderBy(f => Vector2.Distance(f.Rect.anchoredPosition, target.Rect.anchoredPosition))
+                .FirstOrDefault();
+            if (chain != null)
+            {
+                chain.Hp -= attacker.ThunderPower;
+            }
+        }
+
+        if (attacker.ExplosionPower > 0f)
+        {
+            foreach (var other in Fighters)
+            {
+                if (other == target || other.Enemy == target.Enemy || other.Rect == null || other.Hp <= 0 ||
+                    target.Rect == null)
+                {
+                    continue;
+                }
+
+                if (Vector2.Distance(other.Rect.anchoredPosition, target.Rect.anchoredPosition) < 90f)
+                {
+                    other.Hp -= attacker.ExplosionPower;
+                }
+            }
+        }
+
+        if (target.Hp <= 0)
+        {
+            VersusPlugin.Log.LogInfo($"custom-arena: {(target.Enemy ? "enemy" : "player")} fighter destroyed");
+            if (target.Rect != null)
+            {
+                UnityEngine.Object.Destroy(target.Rect.gameObject);
+            }
+
+            target.Rect = null;
+            target.Image = null;
+        }
+    }
+
+    private static void ApplyDots()
+    {
+        foreach (var fighter in Fighters)
+        {
+            if (fighter.Rect == null || fighter.Hp <= 0 || Time.time < fighter.NextDot)
+            {
+                continue;
+            }
+
+            fighter.NextDot = Time.time + 1f;
+            fighter.Hp -= fighter.BurnStacks * 0.25f + fighter.VenomStacks * 0.2f;
         }
     }
 
@@ -217,6 +308,13 @@ internal static class CustomArena
             var critMultiplier = Mathf.Max(1f, CatalogStat(catalog, critMultFallback, "CriticalMultiplier"));
             var ranged = CatalogStat(catalog, projectilesFallback, "ProjectileBased", "IsRanged", "Projectiles") > 0f;
             var attackRange = CatalogStat(catalog, 1f, "AttackRange") * 30f;
+            var freeze = CatalogStat(catalog, 0f, "FreezePower");
+            var thunder = CatalogStat(catalog, 0f, "ThunderPower");
+            var combustion = CatalogStat(catalog, 0f, "CombustionPower");
+            var explosion = CatalogStat(catalog, 0f, "ExplosionPower");
+            var steelCoat = CatalogStat(catalog, 0f, "SteelCoatPower");
+            var venom = CatalogStat(catalog, 0f, "VenomPower");
+            var lifeSteal = CatalogStat(catalog, 0f, "LifeSteal");
             var size = Mathf.Clamp(Stat(area, "EntitySize", 1f) * 16f, 14f, 34f);
             var count = Mathf.Clamp(area.TroopQuantity / 9, 1, 3);
 
@@ -250,6 +348,13 @@ internal static class CustomArena
                     CritChance = critChance,
                     CritMultiplier = critMultiplier,
                     Ranged = ranged,
+                    FreezePower = freeze,
+                    ThunderPower = thunder,
+                    CombustionPower = combustion,
+                    ExplosionPower = explosion,
+                    SteelCoatPower = steelCoat,
+                    VenomPower = venom,
+                    LifeSteal = lifeSteal,
                     BaseColor = color,
                 });
                 index++;
