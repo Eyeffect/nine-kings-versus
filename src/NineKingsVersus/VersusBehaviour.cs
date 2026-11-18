@@ -70,33 +70,13 @@ public sealed class VersusBehaviour : MonoBehaviour
     {
         TrackScene();
         VersusNet.Tick();
-        CustomArena.Update(Time.deltaTime);
+        // custom arena disabled: returning to official Gameplay flow
 
         var dumpTroops = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-troops");
         if (System.IO.File.Exists(dumpTroops))
         {
             System.IO.File.Delete(dumpTroops);
             TroopCatalog.Dump();
-        }
-
-        var customArenaFlag = System.IO.Path.Combine(VersusPlugin.DataDir, "custom-arena");
-        if (_lastScene == "Gameplay" && System.IO.File.Exists(customArenaFlag))
-        {
-            System.IO.File.Delete(customArenaFlag);
-            try
-            {
-                var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
-                Array.Sort(files, StringComparer.Ordinal);
-                var local = files.Length > 0
-                    ? Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(File.ReadAllText(files[^1]))
-                    : null;
-                var opponent = LocalSessionProbe.GetOpponentSnapshot();
-                CustomArena.StartBattle(local, opponent);
-            }
-            catch (Exception e)
-            {
-                VersusPlugin.Log.LogWarning($"custom-arena flag failed: {e.Message}");
-            }
         }
 
         var dumpMenu = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-menu");
@@ -1312,6 +1292,29 @@ public sealed class VersusBehaviour : MonoBehaviour
                 return;
             }
 
+            if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
+                !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
+            {
+                var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
+                Array.Sort(files, StringComparer.Ordinal);
+                if (files.Length > 0)
+                {
+                    var mine = SnapshotStrength(File.ReadAllText(files[^1]));
+                    var theirs = SnapshotStrength(VersusNet.OpponentSnapshotJson);
+                    if (mine > 0 && theirs > 0 && Math.Abs(mine - theirs) > 1f)
+                    {
+                        var loser = mine < theirs ? 0 : 1;
+                        _resultHandled = true;
+                        VersusPlugin.Log.LogInfo(
+                            $"match-result: strength decision host={mine:F0} join={theirs:F0} " +
+                            $"loser={(loser == 0 ? "host" : "join")}");
+                        VersusNet.SendResult(loser);
+                        ApplyMatchResult(loser);
+                        return;
+                    }
+                }
+            }
+
             if (VersusNet.Mode == "host")
             {
                 if (!_resultHandled && myLives >= 0 && peerLives >= 0 && myLives != peerLives)
@@ -1335,6 +1338,44 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
     }
 
+    private static float SnapshotStrength(string json)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("Areas", out var areas) || areas.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                return 0f;
+            }
+
+            float total = 0f;
+            foreach (var area in areas.EnumerateArray())
+            {
+                if (!area.TryGetProperty("PlacedEntityType", out var kind) || kind.GetString() != "Troop")
+                {
+                    continue;
+                }
+
+                var quantity = area.TryGetProperty("TroopQuantity", out var q) ? q.GetInt32() : 0;
+                var strength = 0f;
+                if (area.TryGetProperty("Stats", out var stats) &&
+                    stats.TryGetProperty("Strength", out var s))
+                {
+                    strength = (float)s.GetDouble();
+                }
+
+                total += strength * quantity;
+            }
+
+            return total;
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
+
     private static void ApplyMatchResult(int loser)
     {
         _resultHandled = true;
@@ -1343,47 +1384,23 @@ public sealed class VersusBehaviour : MonoBehaviour
         if (iAmLoser)
         {
             RunCommand("SetLife 0");
+            VersusNativeMenu.ShowResult("DEFEAT");
         }
         else
         {
             RunCommand("SetLife 1");
             try
             {
-                var diplomat = typeof(GameplayInterface.GameplayUI_DiplomatView).GetMethod(
-                    "TryJumpToMultiplayerVictoryWave",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
-                if (diplomat != null)
-                {
-                    diplomat.Invoke(diplomat.IsStatic ? null : UnityEngine.Object.FindObjectOfType<GameplayInterface.GameplayUI_DiplomatView>(), null);
-                    VersusPlugin.Log.LogInfo("match-result: invoked multiplayer victory jump");
-
-                try
-                {
-                    var deathScreen = GameplayInterface.GameplayUI.MultiplayerEnemyDeathScreen;
-                    if (deathScreen != null)
-                    {
-                        deathScreen.Show();
-                        VersusPlugin.Log.LogInfo("match-result: showed multiplayer enemy death screen");
-                    }
-
-                    Core.Wave.Data?.SetRunning(false);
-                    Core.Wave.Instance?.StopSpawningEnemies();
-                }
-                catch (Exception e)
-                {
-                    VersusPlugin.Log.LogWarning($"match-result: victory UI failed: {e.Message}");
-                }
-                }
-                else
-                {
-                    VersusPlugin.Log.LogWarning("match-result: victory jump method not found");
-                }
+                Core.Wave.Data?.SetRunning(false);
+                Core.Wave.Instance?.StopSpawningEnemies();
+                Core.Wave.Instance?.DespawnWaveEnemies();
             }
             catch (Exception e)
             {
-                VersusPlugin.Log.LogWarning($"match-result: victory jump failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+                VersusPlugin.Log.LogWarning($"match-result: stop combat failed: {e.Message}");
             }
+
+            VersusNativeMenu.ShowResult("VICTORY");
         }
     }
 

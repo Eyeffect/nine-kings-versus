@@ -87,6 +87,64 @@ internal static class VersusNativeMenu
         }
     }
 
+    public static void ShowResult(string title)
+    {
+        try
+        {
+            var root = new GameObject("VersusResult");
+            root.AddComponent<RectTransform>();
+            var canvas = root.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 900;
+            root.AddComponent<CanvasScaler>();
+            UnityEngine.Object.DontDestroyOnLoad(root);
+
+            var dim = new GameObject("Dim");
+            dim.AddComponent<RectTransform>();
+            dim.transform.SetParent(root.transform, false);
+            var dimRect = dim.GetComponent<RectTransform>();
+            dimRect.anchorMin = Vector2.zero;
+            dimRect.anchorMax = Vector2.one;
+            dimRect.offsetMin = Vector2.zero;
+            dimRect.offsetMax = Vector2.zero;
+            var dimImage = dim.AddComponent<Image>();
+            dimImage.color = new Color(0f, 0f, 0f, 0.72f);
+
+            var label = new GameObject("Title");
+            label.AddComponent<RectTransform>();
+            label.transform.SetParent(root.transform, false);
+            var rect = label.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(700f, 160f);
+            var text = label.AddComponent<TMPro.TextMeshProUGUI>();
+            var font = _font;
+            if (font == null)
+            {
+                var existing = UnityEngine.Object.FindObjectOfType<TMPro.TMP_Text>();
+                font = existing != null ? existing.font : null;
+            }
+
+            if (font != null)
+            {
+                text.font = font;
+            }
+
+            text.text = title;
+            text.fontSize = 64;
+            text.alignment = TMPro.TextAlignmentOptions.Center;
+            text.color = title == "VICTORY"
+                ? new Color(0.95f, 0.8f, 0.25f, 1f)
+                : new Color(0.9f, 0.25f, 0.2f, 1f);
+            VersusPlugin.Log.LogInfo($"result screen: {title}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"result screen failed: {e.Message}");
+        }
+    }
+
     public static void Toggle()
     {
         if (_root == null)

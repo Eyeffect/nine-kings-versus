@@ -199,7 +199,7 @@ internal static class Patches
                 LocalSessionProbe.EnsureEnemySnapshot("SpawnWave");
                 if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")))
                 {
-                    CleanArena.InstallWaveTroops(LocalSessionProbe.GetOpponentSnapshot());
+                    // Official flow: keep the game's own WaveTroops and enemy spawning.
                 }
 
                 var data = Core.Wave.Data;
