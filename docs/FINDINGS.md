@@ -249,6 +249,19 @@ Combined with `multi-bot` (5 distinct decks from snapshots), a match can now hav
 
 Two-process run with all flags (auto-versus, multi-bot, multi-preview, avatar-bar, refresh-map): both peers stayed at wave 16 after the result; shared life-based result fired; official `OnCompleteGame` end screen called. `ShowMultiplayerResults` NREs when called after `OnCompleteGame` and was removed — `OnCompleteGame` is the correct end-screen entry. Both sides now also call `SetRunning(false)` when the match ends so combat freezes.
 
+## Native menu decompilation
+
+Decompiled the game's UI flow into `local/dump/menu-decompiled.txt`:
+- `GameplayUI.ShowSingleUI(UISubController<GameplayUI>)` (0x1804DE900) and `ShowNextUI(float delay)` (0x1804DE630) push a subcontroller into `GameplayUI`'s panel stack. `RegisterNextUI`/`UnregisterNextUI` manage the queued panel.
+- `MainMenuUI_Main.MainMenuPanel.ShowPanel` (0x180875400) shows the native main-menu panel; other panels (StartGame, Singleplayer, Extras) have their own `ShowPanel`.
+- `GameplayUI_PlacingView.ShowStartBattleButton(bool)` (0x18067C910) toggles the native Start Battle button.
+- `GameplayUI_EndUI.SetUI(EndUIType)` (0x1804F3800) selects Victory/Defeat variants.
+- `GameplayUI_MultiplayerScreen.ShowResults(Button newRunButton, float statsPanelWidth)` (0x18051B240) lays out the native multiplayer results panel.
+
+Added `native-menu` flag → `LocalSessionProbe.ShowNativeMenu()` calls `GameplayUI.ShowSingleUI(GameplayUI.MultiplayerScreen)`; logged successfully. Visual appearance not yet confirmed.
+
+The long-term native-menu approach is to reuse these `UISubController` panels instead of the hand-built UGUI overlays, populating them through their own `Show`/`Populate` methods once the hub-driven initialization is reproduced.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:

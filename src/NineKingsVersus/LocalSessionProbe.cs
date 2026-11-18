@@ -542,6 +542,30 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
+    /// Shows the game's own multiplayer UI subcontroller through GameplayUI's
+    /// native panel stack instead of a hand-built overlay.
+    /// </summary>
+    public static void ShowNativeMenu()
+    {
+        try
+        {
+            var screen = GameplayInterface.GameplayUI.MultiplayerScreen;
+            if (screen == null)
+            {
+                VersusPlugin.Log.LogWarning("native-menu: MultiplayerScreen missing");
+                return;
+            }
+
+            GameplayInterface.GameplayUI.ShowSingleUI(screen);
+            VersusPlugin.Log.LogInfo("native-menu: ShowSingleUI(MultiplayerScreen)");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"native-menu failed: {e.Message}");
+        }
+    }
+
+    /// <summary>
     /// Right-side opponent bar using the game's own king face sprites.
     /// </summary>
     public static void BuildAvatarBar()

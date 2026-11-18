@@ -97,6 +97,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
         }
 
+        var nativeMenu = System.IO.Path.Combine(VersusPlugin.DataDir, "native-menu");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(nativeMenu))
+        {
+            System.IO.File.Delete(nativeMenu);
+            LocalSessionProbe.ShowNativeMenu();
+        }
+
         var avatarBar = System.IO.Path.Combine(VersusPlugin.DataDir, "avatar-bar");
         if (_lastScene == "Gameplay" && System.IO.File.Exists(avatarBar))
         {
