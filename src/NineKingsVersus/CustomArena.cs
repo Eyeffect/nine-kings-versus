@@ -2,31 +2,34 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace NineKingsVersus;
 
 /// <summary>
-/// Custom combat simulation. It uses the game only as a renderer: troops are
-/// created through the game's troop factory, but movement, targeting, damage,
-/// death and the win condition are all driven here, independently of Wave.
+/// Self-contained 1v1 combat arena. The game engine is used only as a Unity
+/// host: fighters are UGUI images, and movement, targeting, damage, death and
+/// the win condition are entirely driven here. No Wave or troop AI is involved.
 /// </summary>
 internal static class CustomArena
 {
     private sealed class Fighter
     {
-        public Core.Entities.Troop Troop;
+        public RectTransform Rect;
+        public Image Image;
         public bool Enemy;
-        public double Hp;
-        public double MaxHp;
-        public double Damage;
-        public double Speed;
-        public double Range;
-        public double AttackCooldown;
+        public float Hp;
+        public float Damage;
+        public float Speed;
+        public float Range;
+        public float Cooldown;
+        public Color BaseColor;
     }
 
     private static readonly List<Fighter> Fighters = new List<Fighter>();
-    private static System.Reflection.MethodInfo _factory;
-    private static Core.Kingdoms.KingdomArea _area;
+    private static GameObject _canvasRoot;
+    private static RectTransform _panel;
+    private static Text _resultLabel;
     private static float _nextLog;
 
     public static bool Active => Fighters.Count > 0;
@@ -42,26 +45,18 @@ internal static class CustomArena
         {
             Stop();
             Winner = -1;
+            EnsureCanvas();
 
-            if (_factory == null)
-            {
-                _factory = typeof(Core.Entities.Troop).GetMethods(
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance)
-                    .FirstOrDefault(m => m.Name.Contains("Troop_TroopSo_KingdomArea_Boolean_Boolean"));
-            }
-
-            _area = FindArea();
-            if (_factory == null || _area == null)
-            {
-                VersusPlugin.Log.LogWarning("custom-arena: factory or area unavailable");
-                return;
-            }
-
-            SpawnArmy(local, false, -9f);
-            SpawnArmy(opponent, true, 9f);
+            SpawnArmy(local, false, -420f);
+            SpawnArmy(opponent, true, 420f);
             PlayerInitial = PlayerAlive;
             EnemyInitial = EnemyAlive;
+
+            if (_resultLabel != null)
+            {
+                _resultLabel.text = "CUSTOM 1v1 ARENA";
+            }
+
             VersusPlugin.Log.LogInfo(
                 $"custom-arena: battle started player={PlayerInitial} enemy={EnemyInitial}");
         }
@@ -75,9 +70,9 @@ internal static class CustomArena
     {
         foreach (var fighter in Fighters)
         {
-            if (fighter.Troop != null)
+            if (fighter.Rect != null)
             {
-                UnityEngine.Object.Destroy(fighter.Troop.gameObject);
+                UnityEngine.Object.Destroy(fighter.Rect.gameObject);
             }
         }
 
@@ -97,158 +92,166 @@ internal static class CustomArena
         var player = Fighters.Where(f => !f.Enemy).ToList();
         var enemy = Fighters.Where(f => f.Enemy).ToList();
 
-        StepSide(player, enemy, deltaTime, 1f);
-        StepSide(enemy, player, deltaTime, -1f);
-
-        if (Time.time >= _nextLog)
-        {
-            _nextLog = Time.time + 5f;
-            var sampleA = Fighters.FirstOrDefault();
-            var sampleB = Fighters.LastOrDefault();
-            var posA = sampleA?.Troop != null ? sampleA.Troop.transform.position.ToString() : "dead";
-            var posB = sampleB?.Troop != null ? sampleB.Troop.transform.position.ToString() : "dead";
-            VersusPlugin.Log.LogInfo(
-                $"custom-arena: player={PlayerAlive}/{PlayerInitial} enemy={EnemyAlive}/{EnemyInitial} " +
-                $"winner={Winner} a={posA} b={posB} dt={deltaTime:F3}");
-        }
-
         if (Winner < 0)
         {
+            StepSide(player, enemy, deltaTime);
+            StepSide(enemy, player, deltaTime);
+
             if (enemy.Count == 0)
             {
                 Winner = 0;
-                VersusPlugin.Log.LogInfo("custom-arena: player wins");
             }
             else if (player.Count == 0)
             {
                 Winner = 1;
-                VersusPlugin.Log.LogInfo("custom-arena: enemy wins");
             }
+
+            if (Winner >= 0 && _resultLabel != null)
+            {
+                _resultLabel.text = Winner == 0 ? "VICTORY" : "DEFEAT";
+                VersusPlugin.Log.LogInfo($"custom-arena: winner={(Winner == 0 ? "player" : "enemy")}");
+            }
+        }
+
+        if (Time.time >= _nextLog)
+        {
+            _nextLog = Time.time + 5f;
+            VersusPlugin.Log.LogInfo(
+                $"custom-arena: player={PlayerAlive}/{PlayerInitial} enemy={EnemyAlive}/{EnemyInitial} " +
+                $"winner={Winner} dt={deltaTime:F3}");
         }
     }
 
-    private static void StepSide(List<Fighter> attackers, List<Fighter> defenders, float dt, float direction)
+    private static void StepSide(List<Fighter> attackers, List<Fighter> defenders, float dt)
     {
         foreach (var attacker in attackers)
         {
-            if (attacker.Troop == null || attacker.Hp <= 0)
+            if (attacker.Rect == null || attacker.Hp <= 0)
             {
                 continue;
             }
 
-            var target = defenders.Where(d => d.Hp > 0 && d.Troop != null)
-                .OrderBy(d => Vector3.Distance(attacker.Troop.transform.position, d.Troop.transform.position))
+            var target = defenders
+                .Where(d => d.Hp > 0 && d.Rect != null)
+                .OrderBy(d => Vector2.Distance(attacker.Rect.anchoredPosition, d.Rect.anchoredPosition))
                 .FirstOrDefault();
             if (target == null)
             {
                 continue;
             }
 
-            var position = attacker.Troop.transform.position;
-            var targetPosition = target.Troop.transform.position;
-            var distance = Vector3.Distance(position, targetPosition);
+            var delta = target.Rect.anchoredPosition - attacker.Rect.anchoredPosition;
+            var distance = delta.magnitude;
             if (distance > attacker.Range)
             {
-                var step = Vector3.MoveTowards(position, targetPosition, (float)(attacker.Speed * dt));
-                attacker.Troop.transform.position = step;
+                attacker.Rect.anchoredPosition += delta.normalized * (attacker.Speed * dt);
             }
             else
             {
-                attacker.AttackCooldown -= dt;
-                if (attacker.AttackCooldown <= 0f)
+                attacker.Cooldown -= dt;
+                if (attacker.Cooldown <= 0f)
                 {
-                    attacker.AttackCooldown = 1f;
+                    attacker.Cooldown = 1f;
                     target.Hp -= attacker.Damage;
+                    var ratio = Mathf.Clamp01(target.Hp / 100f);
+                    target.Image.color = Color.Lerp(new Color(0.25f, 0.25f, 0.25f, 1f), target.BaseColor, ratio);
                     if (target.Hp <= 0)
                     {
-                        VersusPlugin.Log.LogInfo($"custom-arena: {(target.Enemy ? "enemy" : "player")} troop died");
-                        UnityEngine.Object.Destroy(target.Troop.gameObject);
-                        target.Troop = null;
+                        VersusPlugin.Log.LogInfo(
+                            $"custom-arena: {(target.Enemy ? "enemy" : "player")} fighter destroyed");
+                        UnityEngine.Object.Destroy(target.Rect.gameObject);
+                        target.Rect = null;
+                        target.Image = null;
                     }
                 }
             }
-
-            _ = direction;
         }
     }
 
-    private static void SpawnArmy(Gameplay.GameSnapshot snapshot, bool isEnemy, float startX)
+    private static void SpawnArmy(Gameplay.GameSnapshot snapshot, bool enemy, float startX)
     {
-        var types = new List<Core.Itens.TroopSo>();
+        var count = 0;
         if (snapshot?.Areas != null)
         {
-            foreach (var area in snapshot.Areas)
+            for (var i = 0; i < snapshot.Areas.Count; i++)
             {
-                if (area == null || string.IsNullOrEmpty(area.PlacedCardName) || area.PlacedEntityType != "Troop")
+                var area = snapshot.Areas[i];
+                if (area != null && area.PlacedEntityType == "Troop" &&
+                    !string.IsNullOrEmpty(area.PlacedCardName))
                 {
-                    continue;
-                }
-
-                var type = Core.Game.GetTroop(area.PlacedCardName);
-                if (type == null)
-                {
-                    continue;
-                }
-
-                var count = Math.Max(1, Math.Min(3, area.TroopQuantity / 9));
-                for (var i = 0; i < count; i++)
-                {
-                    types.Add(type);
+                    count++;
                 }
             }
         }
 
-        for (var i = 0; i < types.Count; i++)
+        count = Mathf.Clamp(count, 5, 20);
+        for (var i = 0; i < count; i++)
         {
-            Core.Entities.Troop troop;
-            try
-            {
-                var args = new object[] { types[i], _area, isEnemy, true };
-                troop = (Core.Entities.Troop)(_factory.IsStatic
-                    ? _factory.Invoke(null, args)
-                    : _factory.Invoke(null, args));
-            }
-            catch
-            {
-                continue;
-            }
-
-            if (troop == null)
-            {
-                continue;
-            }
-
-            troop.transform.position = new Vector3(startX, (i - types.Count / 2f) * 1.4f, 0f);
-            troop.enabled = false;
+            var go = new GameObject("Fighter");
+            go.AddComponent<RectTransform>();
+            go.transform.SetParent(_panel, false);
+            var rect = go.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(22f, 22f);
+            rect.anchoredPosition = new Vector2(startX, (i - count / 2f) * 26f);
+            var image = go.AddComponent<Image>();
+            var color = enemy
+                ? new Color(0.9f, 0.25f, 0.2f, 1f)
+                : new Color(0.25f, 0.55f, 1f, 1f);
+            image.color = color;
             Fighters.Add(new Fighter
             {
-                Troop = troop,
-                Enemy = isEnemy,
+                Rect = rect,
+                Image = image,
+                Enemy = enemy,
                 Hp = 100,
-                MaxHp = 100,
-                Damage = 12,
-                Speed = 2.2,
-                Range = 1.2,
+                Damage = 14,
+                Speed = 90,
+                Range = 26,
+                BaseColor = color,
             });
         }
     }
 
-    private static Core.Kingdoms.KingdomArea FindArea()
+    private static void EnsureCanvas()
     {
-        var melee = Core.Wave.PlayerMeleeTroops;
-        if (melee != null && melee.Troops != null && melee.Troops.Count > 0)
+        if (_canvasRoot != null)
         {
-            var field = typeof(Core.Entities.Entity).GetField("m_Area",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
-            var area = field?.GetValue(melee.Troops[0]) as Core.Kingdoms.KingdomArea;
-            if (area != null)
-            {
-                return area;
-            }
+            return;
         }
 
-        var areas = UnityEngine.Object.FindObjectsOfType<Core.Kingdoms.KingdomArea>();
-        return areas != null && areas.Length > 0 ? areas[0] : null;
+        _canvasRoot = new GameObject("VersusArenaCanvas");
+        _canvasRoot.AddComponent<RectTransform>();
+        var canvas = _canvasRoot.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 500;
+        _canvasRoot.AddComponent<CanvasScaler>();
+        _canvasRoot.AddComponent<GraphicRaycaster>();
+        UnityEngine.Object.DontDestroyOnLoad(_canvasRoot);
+
+        var panelGo = new GameObject("ArenaPanel");
+        panelGo.AddComponent<RectTransform>();
+        panelGo.transform.SetParent(_canvasRoot.transform, false);
+        _panel = panelGo.GetComponent<RectTransform>();
+        _panel.anchorMin = new Vector2(0.5f, 0.5f);
+        _panel.anchorMax = new Vector2(0.5f, 0.5f);
+        _panel.pivot = new Vector2(0.5f, 0.5f);
+        _panel.sizeDelta = new Vector2(1000f, 600f);
+        var panelImage = panelGo.AddComponent<Image>();
+        panelImage.color = new Color(0.03f, 0.04f, 0.07f, 0.85f);
+
+        var labelGo = new GameObject("ResultLabel");
+        labelGo.AddComponent<RectTransform>();
+        labelGo.transform.SetParent(_panel, false);
+        var labelRect = labelGo.GetComponent<RectTransform>();
+        labelRect.anchorMin = new Vector2(0.5f, 1f);
+        labelRect.anchorMax = new Vector2(0.5f, 1f);
+        labelRect.pivot = new Vector2(0.5f, 1f);
+        labelRect.anchoredPosition = new Vector2(0f, -10f);
+        labelRect.sizeDelta = new Vector2(400f, 40f);
+        _resultLabel = labelGo.AddComponent<Text>();
+        _resultLabel.text = "CUSTOM 1v1 ARENA";
+        _resultLabel.fontSize = 24;
+        _resultLabel.alignment = TextAnchor.MiddleCenter;
+        _resultLabel.color = new Color(0.9f, 0.92f, 1f, 1f);
     }
 }
