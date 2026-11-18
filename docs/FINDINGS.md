@@ -270,6 +270,18 @@ Conclusion: the official right-side avatar widget cannot be populated from our p
 
 `native-menu` (`GameplayUI.ShowSingleUI(MultiplayerScreen)`) calls succeeded but presented a full-screen subcontroller that locked normal controls; it is not a usable overlay menu. The native VERSUS button in the main menu is the only native menu integration that works.
 
+## Why the real multiplayer start/UI can't be used
+
+Tried `MultiplayerManager.StartGame(instaLoad=true, forceScene="Gameplay")` from the hub with a fabricated session. It failed with:
+
+`[StartGame] Matchmaking failed. StatusCode: 0, ErrorMessage: No multiplayer auth token is currently stored. Call Login or Register first.`
+
+It then triggered the game's own `AbandonRun` HTTP request (status 200, rank -3). This is a server-dependent path and violates the offline-only constraint, so the `official-start` flag and method were removed from the plugin immediately.
+
+This is the concrete reason the official multiplayer UI (including `PopulateEnemyFaces`) can't be initialized offline: the widget is set up by the hub→matchmaking→StartGame sequence, which requires a real auth token and server response. Our session-injection shortcut bypasses it, leaving the widget unusable.
+
+Disclosure: the test made one unintended online AbandonRun request from the disposable test copy. No account credentials were used; the offline gate only patches the connectivity check, not the HTTP client itself.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
