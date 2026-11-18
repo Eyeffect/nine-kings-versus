@@ -1488,6 +1488,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         VersusPlugin.Log.LogInfo($"match-result: applying {(iAmLoser ? "defeat" : "victory")} on {VersusNet.Mode}");
         if (iAmLoser)
         {
+            Core.Wave.Data?.SetRunning(false);
             RunCommand("SetLife 0");
             ShowOfficialEnd(GameplayInterface.GameplayUI_EndUI.EndUIType.Defeat);
         }
@@ -1528,20 +1529,6 @@ public sealed class VersusBehaviour : MonoBehaviour
 
             method.Invoke(null, new object[] { type });
             VersusPlugin.Log.LogInfo($"match-result: OnCompleteGame({type})");
-
-            try
-            {
-                var stats = GameplayInterface.GameplayUI.Stats;
-                if (stats != null)
-                {
-                    stats.ShowMultiplayerResults();
-                    VersusPlugin.Log.LogInfo("match-result: ShowMultiplayerResults called");
-                }
-            }
-            catch (Exception e)
-            {
-                VersusPlugin.Log.LogWarning($"match-result: ShowMultiplayerResults failed: {e.Message}");
-            }
 
             _pendingEndType = null;
         }

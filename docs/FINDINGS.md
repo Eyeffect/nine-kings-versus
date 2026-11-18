@@ -245,6 +245,10 @@ This is a custom bar using the game's own face sprites and font, not the origina
 
 Combined with `multi-bot` (5 distinct decks from snapshots), a match can now have several opponents each with its own army and its own visible base.
 
+## Full integration test
+
+Two-process run with all flags (auto-versus, multi-bot, multi-preview, avatar-bar, refresh-map): both peers stayed at wave 16 after the result; shared life-based result fired; official `OnCompleteGame` end screen called. `ShowMultiplayerResults` NREs when called after `OnCompleteGame` and was removed — `OnCompleteGame` is the correct end-screen entry. Both sides now also call `SetRunning(false)` when the match ends so combat freezes.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
