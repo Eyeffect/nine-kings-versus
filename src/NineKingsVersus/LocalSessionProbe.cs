@@ -680,6 +680,78 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
+    /// Builds several opponent base previews by invoking Show per bot and cloning
+    /// each generated root before the next call replaces it.
+    /// </summary>
+    public static void ShowMultiplePreviews()
+    {
+        try
+        {
+            var manager = UnityEngine.Object.FindObjectOfType<Gameplay.GameplayMultiplayerManager>();
+            var previewField = typeof(Gameplay.GameplayMultiplayerManager).GetProperty("m_MapPreview",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var preview = previewField?.GetValue(manager);
+            var session = MultiplayerSystems.MultiplayerManager.Session;
+            if (preview == null || session?.Data == null)
+            {
+                VersusPlugin.Log.LogWarning("multi-preview: missing preview or session");
+                return;
+            }
+
+            var show = preview.GetType().GetMethod("Show",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var currentProp = preview.GetType().GetProperty("m_CurrentPreview",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            if (show == null || currentProp == null)
+            {
+                VersusPlugin.Log.LogWarning("multi-preview: Show or m_CurrentPreview missing");
+                return;
+            }
+
+            var wave = Core.Wave.Data?.Wave ?? -1;
+            var clones = new UnityEngine.GameObject[0];
+            var shown = 0;
+            for (var i = 0; i < session.Data.Length; i++)
+            {
+                var run = session.Data[i];
+                var snapshot = run?.snapshot?.GetWaveSnapshot(wave, true) ?? run?.snapshot?.FinalSnapshot;
+                if (snapshot == null || !MultiplayerSystems.MultiplayerManager.TryResolveKing(run.kingId, out var king) || king == null)
+                {
+                    continue;
+                }
+
+                var result = show.Invoke(preview, new object[] { king, snapshot, false });
+                if (result is bool ok && !ok)
+                {
+                    continue;
+                }
+
+                var root = currentProp.GetValue(preview) as UnityEngine.GameObject;
+                if (root == null)
+                {
+                    continue;
+                }
+
+                var clone = UnityEngine.Object.Instantiate(root);
+                clone.name = $"VersusBotBase_{run.kingId}";
+                clone.transform.position = root.transform.position + new UnityEngine.Vector3(shown * 22f, 0f, 0f);
+                System.Array.Resize(ref clones, clones.Length + 1);
+                clones[clones.Length - 1] = clone;
+                shown++;
+            }
+
+            VersusPlugin.Log.LogInfo($"multi-preview: built {shown} opponent base previews");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"multi-preview failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    /// <summary>
     /// Uses the game's multiplayer map-preview renderer to build a visual enemy
     /// base from the opponent snapshot. This is the missing base presentation.
     /// </summary>

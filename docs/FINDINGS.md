@@ -239,6 +239,12 @@ The official `PopulateEnemyFaces` NREs from the probe path because its UI is ini
 
 This is a custom bar using the game's own face sprites and font, not the original `GameplayUI_MultiplayerScreen` widget, but it provides the right-side opponent UI the official mode shows.
 
+## Multiple opponent bases
+
+`MultiplayerRemoteMapPreview.Show` stores one generated root in `m_CurrentPreview` and destroys the previous one on each call. Added `multi-preview` flag → `LocalSessionProbe.ShowMultiplePreviews()`: for each session run it calls `Show(king, snapshot, false)`, grabs `m_CurrentPreview`, clones it, offsets the clone by 22 world units per bot, and keeps the clones alive. Validated: `multi-preview: built 12 opponent base previews`.
+
+Combined with `multi-bot` (5 distinct decks from snapshots), a match can now have several opponents each with its own army and its own visible base.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
