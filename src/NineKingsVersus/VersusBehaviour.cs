@@ -97,6 +97,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
         }
 
+        var populateFaces = System.IO.Path.Combine(VersusPlugin.DataDir, "populate-faces");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(populateFaces))
+        {
+            System.IO.File.Delete(populateFaces);
+            LocalSessionProbe.PopulateFaces();
+        }
+
         var showPreview = System.IO.Path.Combine(VersusPlugin.DataDir, "show-preview");
         if (_lastScene == "Gameplay" && System.IO.File.Exists(showPreview))
         {

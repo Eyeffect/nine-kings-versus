@@ -212,6 +212,21 @@ Two-process run with `show-preview` enabled: the enemy base appeared on screen (
 
 Remaining: the preview is currently triggered once at startup rather than refreshed per wave; result/end-screen flow already works.
 
+## Multiplayer gameplay loop / avatar bar
+
+`GameplayUI_MultiplayerScreen` (0x180519E90 area) implements `IWaveBeginEventListener`/`IWaveEndEventListener` and owns:
+- `m_UserFaceTemplate` (`GameplayUI_UserFace`)
+- `m_Faces` list, `m_PlayerNameByPlayerId`, `m_EnemyKingByPlayerId`, `m_RunDataByPlayerId`
+- `m_EnemyKingdomUI`, `m_BackGradient`, `m_EnemyKingdomNameText`
+- `m_Holder`, `m_HolderRectTransform`, `m_HolderLayoutGroup`
+- `m_PreviewedEnemyPlayerId`, `m_UseExpandedLayout`, `m_OnFaceClicked`
+
+`PopulateEnemyFaces(MultiplayerRunData[] runs, Action<MultiplayerRunData> onFaceClicked, Func<bool> canInteractWithFaces)` clears the face list/dictionaries, stores the callbacks, empties the holder, then (when runs exist) splits runs into local-player vs enemy using `GameplayData+0x140` and each run's `kingId`, instantiating faces from `m_UserFaceTemplate` and filling the dictionaries via `TryResolveKing`. `UpdateFaces()` refreshes them on wave begin/end. This is the left-side avatar bar.
+
+Attempted to call it from the probe with session runs, real managed delegates, and `Show()` first; it still throws NRE inside the method — most likely because `m_UserFaceTemplate`/holder are only initialized by the real multiplayer start path from the hub. Building the avatar bar will require either reproducing that initialization or rendering our own equivalent with the game's face sprites.
+
+For "bots with real bases": the session can carry a run per king (already implemented), and each run's snapshot can drive both a `DeckSo` (army) and a `MultiplayerRemoteMapPreview` (base). The remaining work is iterating bots rather than a single opponent.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:

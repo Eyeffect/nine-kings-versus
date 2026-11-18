@@ -541,6 +541,40 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
+    /// Populates the official left-side avatar bar with the runs in our LAN session.
+    /// </summary>
+    public static void PopulateFaces()
+    {
+        try
+        {
+            var screen = GameplayInterface.GameplayUI.MultiplayerScreen;
+            var runs = MultiplayerSystems.MultiplayerManager.Session?.Data;
+            if (screen == null || runs == null)
+            {
+                VersusPlugin.Log.LogWarning("faces: screen or session runs missing");
+                return;
+            }
+
+            System.Action<MultiplayerSystems.MultiplayerRunData> onFaceClicked =
+                run => VersusPlugin.Log.LogInfo($"face clicked: player={run?.playerId}");
+            System.Func<bool> canInteract = () => true;
+
+            var two = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<MultiplayerSystems.MultiplayerRunData>(2);
+            two[0] = runs[0];
+            two[1] = runs[1];
+
+            screen.Show();
+            screen.PopulateEnemyFaces(two, onFaceClicked, canInteract);
+            screen.UpdateFaces();
+            VersusPlugin.Log.LogInfo($"faces: populated {runs.Length} opponent faces");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"faces failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
     /// Uses the game's multiplayer map-preview renderer to build a visual enemy
     /// base from the opponent snapshot. This is the missing base presentation.
     /// </summary>
