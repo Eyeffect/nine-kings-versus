@@ -387,9 +387,33 @@ internal static class LocalSessionProbe
                 player = enemyProfile,
             };
 
-            var runs = new Il2CppReferenceArray<MultiplayerRunData>(2);
-            runs[0] = localRun;
-            runs[1] = enemyRun;
+            var allRuns = new System.Collections.Generic.List<MultiplayerRunData> { localRun, enemyRun };
+            foreach (Core.CardOwnership king in Enum.GetValues(typeof(Core.CardOwnership)))
+            {
+                if (king == owner || king == opponentKing)
+                {
+                    continue;
+                }
+
+                allRuns.Add(new MultiplayerRunData
+                {
+                    runId = 900100 + (int)king,
+                    playerId = 900100 + (int)king,
+                    kingId = (int)king,
+                    yearPlayed = snapshot.WaveData.WaveNumber,
+                    currentHP = snapshot.WaveData.PlayerLifes,
+                    gameVersion = snapshot.Version,
+                    snapshot = enemySnapshots,
+                    player = enemyProfile,
+                });
+            }
+
+            var runs = new Il2CppReferenceArray<MultiplayerRunData>(allRuns.Count);
+            for (var i = 0; i < allRuns.Count; i++)
+            {
+                runs[i] = allRuns[i];
+            }
+
             var session = new MultiplayerSession(runs,
                 new Il2CppStringArray(0), new Il2CppStringArray(0),
                 new Il2CppStringArray(0), new Il2CppStringArray(0));

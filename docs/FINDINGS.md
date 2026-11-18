@@ -158,6 +158,15 @@ We added a `refresh-map` flag that activates `Wave.MultiplayerMap`, sets `Curren
 
 Also added a `skip-intro` flag that jumps SplashScreen/IntroductionVideo straight to MainMenu, cutting test startup time.
 
+## Base rendering requires real multiplayer mode
+
+`refresh-map` test with `single-load` (WaveData.IsMultiplayer=false): map activated, but enemy areas stayed at 0.
+Same test without `single-load` (WaveData.IsMultiplayer=true): `enemyTroops=1`, `enemyBig=2` after `RefreshMultiplayerMap` — the official enemy base/areas are created.
+
+So the base path works, but only when the run's `WaveData.IsMultiplayer` is true. Combined with the opponent-deck hook, the remaining integration is to run true multiplayer mode with both the deck replacement and `RefreshMultiplayerMap`, and ensure combat still progresses (earlier true-multiplayer probes stalled without the deck hook).
+
+Also expanded the fake session's run array to include a run for every CardOwnership value, because `RefreshMultiplayerMap` resolves the opponent via `Session.GetDataByPlayerKing(king.Owner)`.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
