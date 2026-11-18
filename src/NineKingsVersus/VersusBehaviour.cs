@@ -28,6 +28,7 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static float _diagAt = -1f;
     private static float _syncAt = -1f;
     private static int _lastSyncedTo = -1;
+    private static int _arenaLocalWave = -1;
     private static int _lastNetStateVersion;
     private static int _handshakeWave = -1;
     private static bool _readySent;
@@ -127,6 +128,27 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
         }
 
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave > 0 &&
+            System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")) &&
+            CleanArena.LastWave != Core.Wave.Data.Wave && _arenaLocalWave != Core.Wave.Data.Wave)
+        {
+            var currentWave = Core.Wave.Data.Wave;
+            _arenaLocalWave = currentWave;
+            var opponent = LocalSessionProbe.GetOpponentSnapshot();
+            if (opponent != null)
+            {
+                CleanArena.InstallWaveTroops(opponent);
+                if (!VersusNet.Connected)
+                {
+                    BeginVersusBattle("arena-local");
+                }
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("arena-local: no opponent snapshot");
+            }
+        }
+
         if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
             && Time.time >= _syncAt && !_resultHandled)
         {
@@ -190,7 +212,7 @@ public sealed class VersusBehaviour : MonoBehaviour
                     $"diag: wave={data?.Wave} running={data?.Running} combatOn={data?.CombatOn} " +
                     $"waitingToBegin={data?.WaitingToBegin} waitingForEnemies={data?.waitingForEnemiesToSpawn} " +
                     $"entities={entities?.Length ?? 0} players={players} enemies={enemies} multiplayer={multiplayer} " +
-                    $"arenaSpawned={ArenaSpawner.LastSpawned} arenaWave={ArenaSpawner.LastSpawnWave} " +
+                    $"arenaSpawned={CleanArena.LastSpawned} arenaWave={CleanArena.LastWave} " +
                     $"lives={VersusNet.LocalLives}/{VersusNet.PeerLives} states={VersusNet.StateVersion} " +
                     $"resultHandled={_resultHandled} eliminatedWave={_localEliminatedWave} " +
                     $"waveEnemies={Core.Wave.Enemies?.Count.ToString() ?? "null"} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
@@ -1232,8 +1254,8 @@ public sealed class VersusBehaviour : MonoBehaviour
                 }
             }
 
-            if (!_resultHandled && wave > 0 && ArenaSpawner.LastSpawnWave == wave &&
-                ArenaSpawner.LastSpawned > 0 && liveEnemies <= 3 &&
+            if (!_resultHandled && wave > 0 && CleanArena.LastWave == wave &&
+                CleanArena.LastSpawned > 0 && liveEnemies <= 3 &&
                 (Core.Wave.Data?.CombatOn ?? false) &&
                 _localEliminatedWave != wave)
             {

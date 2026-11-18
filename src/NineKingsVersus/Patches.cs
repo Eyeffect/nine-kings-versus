@@ -90,7 +90,7 @@ internal static class Patches
                     var opponent = LocalSessionProbe.GetOpponentSnapshot();
                     if (opponent != null)
                     {
-                        ArenaSpawner.SpawnOpponentArmy(opponent);
+                        // custom army spawn disabled: using WaveTroops injection instead
                     }
                     else
                     {
@@ -199,7 +199,7 @@ internal static class Patches
                 LocalSessionProbe.EnsureEnemySnapshot("SpawnWave");
                 if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")))
                 {
-                    ArenaSpawner.SuppressLocalWaveEnemies();
+                    CleanArena.InstallWaveTroops(LocalSessionProbe.GetOpponentSnapshot());
                 }
 
                 var data = Core.Wave.Data;
@@ -248,6 +248,19 @@ internal static class Patches
                     $"SpawnWave out: entities={entities?.Length ?? 0} enemy={enemy} multiplayerEnemy={multiplayerEnemy} " +
                     $"waveTroops={Core.Wave.WaveTroops?.Length ?? -1} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
 
+                var wave = Core.Wave.Data?.Wave ?? -1;
+                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && CleanArena.LastWave != wave)
+                {
+                    var opponent = LocalSessionProbe.GetOpponentSnapshot();
+                    if (opponent != null)
+                    {
+                        // custom army spawn disabled: using WaveTroops injection instead
+                    }
+                    else
+                    {
+                        VersusPlugin.Log.LogWarning("clean-arena: no opponent snapshot at SpawnWave");
+                    }
+                }
             }
             catch (Exception e)
             {

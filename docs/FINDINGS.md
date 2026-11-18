@@ -114,3 +114,16 @@ Further iterations still showed the same failures:
 - The troop-count bar shows local wave data, not the custom spawned army, so it is misleading.
 
 Decision: stop iterating on this prototype. The LAN transport, native in-game menu, per-wave snapshot sync, arena army spawner, and diagnostics work as isolated pieces, but the game's faction/AI and victory flow cannot be driven reliably from the async-PvP surface offline. A real live 1v1 needs an engine-level rewrite (custom combat scene and result UI) rather than reusing the shipped gauntlet.
+
+## Clean-arena branch (result)
+
+Created branch `clean-arena` and rebuilt the spawner from first principles:
+
+- Used Troop's internal factory with a real KingdomArea and `isEnemy=true`.
+- Called `RegisterOnWaveLists()`; it throws duplicate-key because the factory already registers troops.
+- Called `Wave_Begin()` / `SetReady()`; troops still do not fight.
+- Tried replacing `Wave.WaveTroops` with opponent troop types before Start Battle. This removed all enemies: `WaveTroops` is the player's own deck/wave troops, not the enemy composition.
+
+Conclusion: there is no exposed offline path that constructs a controllable enemy army with working AI. The clean branch confirms the earlier finding. No further hook-based iteration is worthwhile.
+
+Recommendation: archive the milestone; a real implementation needs a custom combat scene/engine built outside the shipped Gameplay flow.
