@@ -97,6 +97,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
         }
 
+        var avatarBar = System.IO.Path.Combine(VersusPlugin.DataDir, "avatar-bar");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(avatarBar))
+        {
+            System.IO.File.Delete(avatarBar);
+            LocalSessionProbe.BuildAvatarBar();
+        }
+
         var populateFaces = System.IO.Path.Combine(VersusPlugin.DataDir, "populate-faces");
         if (_lastScene == "Gameplay" && System.IO.File.Exists(populateFaces))
         {

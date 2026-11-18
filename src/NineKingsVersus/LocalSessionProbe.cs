@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+using UnityEngine;
 using MultiplayerSystems;
 
 namespace NineKingsVersus;
@@ -541,7 +542,111 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
-    /// Populates the official left-side avatar bar with the runs in our LAN session.
+    /// Right-side opponent bar using the game's own king face sprites.
+    /// </summary>
+    public static void BuildAvatarBar()
+    {
+        try
+        {
+            var session = MultiplayerSystems.MultiplayerManager.Session;
+            if (session?.Data == null)
+            {
+                VersusPlugin.Log.LogWarning("avatar: no session runs");
+                return;
+            }
+
+            var root = new GameObject("VersusAvatarBar");
+            root.AddComponent<RectTransform>();
+            var canvas = root.AddComponent<UnityEngine.Canvas>();
+            canvas.renderMode = UnityEngine.RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 850;
+            root.AddComponent<UnityEngine.UI.CanvasScaler>();
+            UnityEngine.Object.DontDestroyOnLoad(root);
+
+            var panel = new GameObject("AvatarPanel");
+            panel.AddComponent<RectTransform>();
+            panel.transform.SetParent(root.transform, false);
+            var rect = panel.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-12f, 0f);
+            rect.sizeDelta = new Vector2(180f, 46f + session.Data.Length * 46f);
+            var image = panel.AddComponent<UnityEngine.UI.Image>();
+            image.color = new Color(0.04f, 0.05f, 0.08f, 0.85f);
+
+            var fontSource = UnityEngine.Object.FindObjectOfType<TMPro.TMP_Text>();
+            var font = fontSource != null ? fontSource.font : null;
+            var localOwner = Core.Wave.PlayerKing?.Owner ?? Core.CardOwnership.KingOfNothing;
+
+            var index = 0;
+            for (var i = 0; i < session.Data.Length; i++)
+            {
+                var run = session.Data[i];
+                if (run == null || (Core.CardOwnership)run.kingId == localOwner)
+                {
+                    continue;
+                }
+
+                var row = new GameObject("AvatarRow");
+                row.AddComponent<RectTransform>();
+                row.transform.SetParent(panel.transform, false);
+                var rowRect = row.GetComponent<RectTransform>();
+                rowRect.anchorMin = new Vector2(0f, 1f);
+                rowRect.anchorMax = new Vector2(0f, 1f);
+                rowRect.pivot = new Vector2(0f, 1f);
+                rowRect.anchoredPosition = new Vector2(8f, -8f - index * 46f);
+                rowRect.sizeDelta = new Vector2(164f, 40f);
+
+                var faceGo = new GameObject("Face");
+                faceGo.AddComponent<RectTransform>();
+                faceGo.transform.SetParent(row.transform, false);
+                var faceRect = faceGo.GetComponent<RectTransform>();
+                faceRect.anchorMin = Vector2.zero;
+                faceRect.anchorMax = Vector2.zero;
+                faceRect.pivot = Vector2.zero;
+                faceRect.sizeDelta = new Vector2(36f, 36f);
+                var faceImage = faceGo.AddComponent<UnityEngine.UI.Image>();
+                faceImage.color = Color.white;
+                if (MultiplayerSystems.MultiplayerManager.TryResolveKing(run.kingId, out var king) &&
+                    king != null && king.Face != null)
+                {
+                    faceImage.sprite = king.Face;
+                }
+
+                var labelGo = new GameObject("Name");
+                labelGo.AddComponent<RectTransform>();
+                labelGo.transform.SetParent(row.transform, false);
+                var labelRect = labelGo.GetComponent<RectTransform>();
+                labelRect.anchorMin = new Vector2(0f, 0f);
+                labelRect.anchorMax = new Vector2(0f, 0f);
+                labelRect.pivot = new Vector2(0f, 0f);
+                labelRect.anchoredPosition = new Vector2(42f, 4f);
+                labelRect.sizeDelta = new Vector2(118f, 32f);
+                var label = labelGo.AddComponent<TMPro.TextMeshProUGUI>();
+                if (font != null)
+                {
+                    label.font = font;
+                }
+
+                label.fontSize = 15;
+                label.text = string.IsNullOrEmpty(run.player?.username)
+                    ? $"Bot {run.kingId}"
+                    : run.player.username;
+                label.color = new Color(0.92f, 0.92f, 1f, 1f);
+                index++;
+            }
+
+            VersusPlugin.Log.LogInfo($"avatar: built right-side bar with {index} faces");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"avatar failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Populates the official right-side avatar bar with the runs in our LAN session.
     /// </summary>
     public static void PopulateFaces()
     {

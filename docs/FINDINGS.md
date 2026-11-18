@@ -233,6 +233,12 @@ Added `OpponentDeck.InstallBots()` behind a `multi-bot` flag. It iterates `Core.
 
 Single-process validation: `bots: installed 5 distinct bot decks`. So a match can now have several AI opponents, each fighting with an army built from its own snapshot. The avatar bar (`PopulateEnemyFaces`) still throws NRE from the probe path, so the right-side avatar UI remains unimplemented.
 
+## Right-side avatar bar (working substitute)
+
+The official `PopulateEnemyFaces` NREs from the probe path because its UI is initialized only by the hub-driven multiplayer start. Instead added `avatar-bar` flag → `LocalSessionProbe.BuildAvatarBar()`: a UGUI panel anchored right-center with one row per opponent run, using `KingSo.Face` sprites (via `MultiplayerManager.TryResolveKing`) and `run.player.username`, plus a TMP label. Validated: `avatar: built right-side bar with 14 faces`.
+
+This is a custom bar using the game's own face sprites and font, not the original `GameplayUI_MultiplayerScreen` widget, but it provides the right-side opponent UI the official mode shows.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
