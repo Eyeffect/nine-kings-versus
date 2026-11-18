@@ -282,6 +282,14 @@ This is the concrete reason the official multiplayer UI (including `PopulateEnem
 
 Disclosure: the test made one unintended online AbandonRun request from the disposable test copy. No account credentials were used; the offline gate only patches the connectivity check, not the HTTP client itself.
 
+## Player king / perk choice
+
+Decompiled `MultiplayerManager.SelectKing` (0x18080D370): stores the chosen `KingSo` at manager +0x50 and updates the hub background/curtains. Decompiled hub perk-submit and `MultiplayerGameSnapshots.SetPerks` (0x1808097B0): perks are stored in a static list at `MultiplayerGameSnapshots + 0x20`, and the hub UI writes a selected perk loadout index per king.
+
+Added `choices.json` (`kingId`, `perkIndex`) plus KING/PERK buttons on the native main-menu panel. `AttachForMultiplayerStart` now applies the chosen king in the hub before building the run: validated with `choices: king=... perkLoadout=2 (stored)` and `attach-pre ... king=KingOfNothing`. The chosen king becomes the local run, with the opponent using the other king.
+
+Perk loadout index is stored but not yet applied to the run — the exact helper (`SetSelectedPerkLoadoutIndex`) lives on a settings object reached through a private decompiled helper, not on `KingSo`/`KingCollectionEntry`.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:

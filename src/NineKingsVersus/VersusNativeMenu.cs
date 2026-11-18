@@ -172,8 +172,8 @@ internal static class VersusNativeMenu
                 { panel.continueBtn, "CLOSE" },
                 { panel.singleplayerBtn, "HOST" },
                 { panel.challengeModeBtn, "JOIN" },
-                { panel.rankedModeBtn, "START BATTLE" },
-                { panel.backBtn, "REBUILD BOARD" },
+                { panel.rankedModeBtn, "KING" },
+                { panel.backBtn, "PERK" },
             };
 
             foreach (var pair in labels)
@@ -214,9 +214,48 @@ internal static class VersusNativeMenu
                     {
                         ApplyFlag("build-enemy", true);
                     }
+                    else if (action == "KING")
+                    {
+                        if (text != null)
+                        {
+                            text.text = CycleKing();
+                        }
+                    }
+                    else if (action == "PERK")
+                    {
+                        if (text != null)
+                        {
+                            text.text = CyclePerk();
+                        }
+                    }
                 }));
                 _nativeListeners.Add(listener);
                 button.onClick.AddListener(listener);
+            }
+
+            LocalSessionProbe.ReadChoices(out var currentKing, out var currentPerk);
+            foreach (var pair in labels)
+            {
+                if (pair.Value == "KING" && pair.Key != null)
+                {
+                    var t = pair.Key.GetComponentInChildren<TextMeshProUGUI>(true);
+                    if (t != null && currentKing >= 0)
+                    {
+                        var e = LocalSessionProbe.FindKings()?.GetEntry((Core.CardOwnership)currentKing);
+                        if (e?.King != null)
+                        {
+                            t.text = e.King.name;
+                        }
+                    }
+                }
+                else if (pair.Value == "PERK" && pair.Key != null)
+                {
+                    var t = pair.Key.GetComponentInChildren<TextMeshProUGUI>(true);
+                    if (t != null)
+                    {
+                        t.text = $"PERK {currentPerk}";
+                    }
+                }
             }
 
             panel.ShowPanel();
@@ -230,6 +269,41 @@ internal static class VersusNativeMenu
 
     private static readonly System.Collections.Generic.List<object> _nativeListeners = new System.Collections.Generic.List<object>();
     private static MainMenuUI.MainMenuUI_Main.MainMenuPanel _mainPanel;
+
+    private static string CycleKing()
+    {
+        LocalSessionProbe.ReadChoices(out var current, out var perk);
+        var kings = new System.Collections.Generic.List<System.ValueTuple<Core.CardOwnership, string>>();
+        foreach (Core.CardOwnership owner in Enum.GetValues(typeof(Core.CardOwnership)))
+        {
+            var entry = LocalSessionProbe.FindKings()?.GetEntry(owner);
+            if (entry?.King != null)
+            {
+                kings.Add(new System.ValueTuple<Core.CardOwnership, string>(owner, entry.King.name));
+            }
+        }
+
+        if (kings.Count == 0)
+        {
+            return "KING ?";
+        }
+
+        var index = kings.FindIndex(k => (int)k.Item1 == current);
+        var next = (index + 1) % kings.Count;
+        var chosen = kings[next];
+        LocalSessionProbe.WriteChoices((int)chosen.Item1, perk);
+        VersusPlugin.Log.LogInfo($"choices: king -> {chosen.Item1} ({chosen.Item2})");
+        return chosen.Item2;
+    }
+
+    private static string CyclePerk()
+    {
+        LocalSessionProbe.ReadChoices(out var king, out var perk);
+        var next = perk >= 3 ? 1 : perk + 1;
+        LocalSessionProbe.WriteChoices(king, next);
+        VersusPlugin.Log.LogInfo($"choices: perk loadout -> {next}");
+        return $"PERK {next}";
+    }
 
     private static void ApplyFlag(string name, bool enabled)
     {

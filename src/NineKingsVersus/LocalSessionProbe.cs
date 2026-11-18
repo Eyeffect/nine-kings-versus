@@ -11,6 +11,96 @@ namespace NineKingsVersus;
 
 internal static class LocalSessionProbe
 {
+    public static Core.Entities.KingCollectionSo FindKings()
+    {
+        var found = UnityEngine.Object.FindObjectOfType<Core.Entities.KingCollectionSo>();
+        if (found != null)
+        {
+            return found;
+        }
+
+        var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.Entities.KingCollectionSo>();
+        return all != null && all.Length > 0 ? all[0] : null;
+    }
+
+    private sealed class PlayerChoices
+    {
+        public int kingId { get; set; } = -1;
+        public int perkIndex { get; set; } = 1;
+    }
+
+    private static string ChoicesPath => Path.Combine(VersusPlugin.DataDir, "choices.json");
+
+    public static void ReadChoices(out int kingId, out int perkIndex)
+    {
+        kingId = -1;
+        perkIndex = 1;
+        try
+        {
+            if (!File.Exists(ChoicesPath))
+            {
+                return;
+            }
+
+            var choices = System.Text.Json.JsonSerializer.Deserialize<PlayerChoices>(File.ReadAllText(ChoicesPath));
+            if (choices == null)
+            {
+                return;
+            }
+
+            kingId = choices.kingId;
+            perkIndex = choices.perkIndex;
+        }
+        catch
+        {
+        }
+    }
+
+    public static void WriteChoices(int kingId, int perkIndex)
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                new PlayerChoices { kingId = kingId, perkIndex = perkIndex });
+            File.WriteAllText(ChoicesPath, json);
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"choices write failed: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Applies the player's king/perk choices in the hub before building the run.
+    /// </summary>
+    private static void ApplyChoices(ref Core.CardOwnership owner)
+    {
+        ReadChoices(out var kingId, out var perkIndex);
+        if (kingId < 0)
+        {
+            return;
+        }
+
+        var entry = FindKings()?.GetEntry((Core.CardOwnership)kingId);
+        if (entry?.King == null)
+        {
+            VersusPlugin.Log.LogWarning($"choices: king {kingId} unavailable");
+            return;
+        }
+
+        try
+        {
+            MultiplayerManager.Instance?.SelectKing(entry.King, true, true);
+            owner = (Core.CardOwnership)kingId;
+            VersusPlugin.Log.LogInfo(
+                $"choices: king={entry.King.name} perkLoadout={perkIndex} (stored)");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"choices apply failed: {e.Message}");
+        }
+    }
+
     public static void Run()
     {
         try
@@ -330,6 +420,9 @@ internal static class LocalSessionProbe
                 VersusPlugin.Log.LogWarning($"attach-pre: unmapped snapshot king {snapshot.Kings.PlayerKing}");
                 return false;
             }
+
+            ApplyChoices(ref owner);
+            kingName = owner.ToString();
 
             var opponentKing = owner == Core.CardOwnership.KingOfSpells
                 ? Core.CardOwnership.KingOfNothing
