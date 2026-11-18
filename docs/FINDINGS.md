@@ -167,6 +167,18 @@ So the base path works, but only when the run's `WaveData.IsMultiplayer` is true
 
 Also expanded the fake session's run array to include a run for every CardOwnership value, because `RefreshMultiplayerMap` resolves the opponent via `Session.GetDataByPlayerKing(king.Owner)`.
 
+## True multiplayer integration (validated)
+
+Two-process run with flags: attach-flow, skip-intro, auto-versus, custom-deck, refresh-map (no single-load, so `WaveData.IsMultiplayer = true`).
+
+Both peers:
+- installed the 8-card opponent deck on the wave king and all enemy kings,
+- invoked `RefreshMultiplayerMap` and produced enemy-side areas (`enemyTroops=3`, `enemyBig=4` on host),
+- spawned opponent troops marked `IsMultiplayerEnemy=True` (9 on host, 18 on join),
+- reached a single shared result from life loss (host Defeat, join Victory) with official `OnCompleteGame` end screens.
+
+This is the closest validated configuration to the official game: real Gameplay scene, enemy base areas, opponent army through the game's own deck/CreateEnemies path, and one winner. Combat remains somewhat unstable in true multiplayer mode (entity counts fluctuate and waves can advance while the result is pending), but the full chain now runs end to end.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
