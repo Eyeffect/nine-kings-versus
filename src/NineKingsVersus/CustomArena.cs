@@ -49,8 +49,8 @@ internal static class CustomArena
     private static float _nextLog;
 
     public static bool Active => Fighters.Count > 0;
-    public static int PlayerAlive => Fighters.Count(f => !f.Enemy);
-    public static int EnemyAlive => Fighters.Count(f => f.Enemy);
+    public static int PlayerAlive => Fighters.Count(f => !f.Enemy && f.Rect != null && f.Hp > 0);
+    public static int EnemyAlive => Fighters.Count(f => f.Enemy && f.Rect != null && f.Hp > 0);
     public static int PlayerInitial { get; private set; }
     public static int EnemyInitial { get; private set; }
     public static int Winner { get; private set; } = -1; // -1 none, 0 player, 1 enemy
@@ -105,8 +105,8 @@ internal static class CustomArena
             return;
         }
 
-        var player = Fighters.Where(f => !f.Enemy).ToList();
-        var enemy = Fighters.Where(f => f.Enemy).ToList();
+        var player = Fighters.Where(f => !f.Enemy && f.Rect != null && f.Hp > 0).ToList();
+        var enemy = Fighters.Where(f => f.Enemy && f.Rect != null && f.Hp > 0).ToList();
 
         if (Winner < 0)
         {
