@@ -1,49 +1,83 @@
-# 9 Kings Versus — private LAN prototype (incomplete)
+# 9 Kings Versus — private LAN prototype
 
-Status: **prototype, not a playable 1v1 mode**. It is kept as a research artifact.
+Unofficial, private mod for **9 Kings 1.0.3.1** (IL2CPP, BepInEx 6). It lets two
+or more private copies of the game play a simultaneous match on a LAN using the
+game's own visuals, troop AI, base renderer and end screens.
+
+This is a **working prototype, not a finished release**. See "Known issues".
 
 ## What works
 
-- Two local copies of the game can connect over private LAN (host/join TCP,
-  length-prefixed JSON, no internet submission).
-- Kingdom snapshots are exchanged; a ready/go handshake starts the same wave on
-  both copies; a host-authoritative life/result message gives both copies the
-  same victory/defeat decision.
-- The game's own Start Battle / hand-card flow can be driven programmatically.
-  In single-player wave mode this produces a complete, advancing battle.
+- Host/join TCP transport over private IPv4 only; snapshots, wave numbers and a
+  shared result are exchanged. Online submission is blocked and the game's
+  internet check is forced off.
+- Real Gameplay scene with `WaveData.IsMultiplayer = true`.
+- Opponent armies built from each bot's snapshot via a runtime `DeckSo` installed
+  on the enemy king's custom-deck field (`KingSo + 0x1F8`). The game's own
+  `CreateEnemies` spawns them with full official AI.
+- Multiple bots: `multi-bot` installs a distinct deck per enemy king.
+- Enemy bases: `show-preview` renders one base; `multi-preview` clones the
+  preview per bot so several bases appear at once.
+- Right-side opponent avatar bar built from the game's king face sprites.
+- One shared winner from combat (life loss / army elimination), official
+  `OnCompleteGame` end screen, and a freeze on wave progression after the result.
+- Native in-game menu: a **VERSUS** button in the game's main menu.
 
-## What does not work (tested and confirmed)
+## Build
 
-- Running with `WaveData.IsMultiplayer = true` makes the camera pull back for the
-  multiplayer arena, but the enemy base is never constructed offline. The
-  opponent's cards can be injected with `SetMultiplayerCard` (entities exist in
-  memory, `IsMultiplayerEnemy` is set), but no visible base appears and no enemy
-  army spawns into it. Both sides end up rushing an empty base.
-- Victory is still the local single-player rule (all wave enemies dead), so both
-  copies can report a win for the same fight.
-- Rewards can be re-issued when the game re-runs `StartWave` for a wave; blocking
-  those calls breaks the wave flow, so this remains unresolved.
+```
+dotnet build src/NineKingsVersus/NineKingsVersus.csproj -c Release
+```
 
-## Conclusion
+Output: `src/NineKingsVersus/bin/Release/net6.0/NineKingsVersus.dll`.
 
-The shipped async-PvP snapshot pipeline cannot be rebuilt into a live 1v1 mode
-by feeding snapshots alone: the enemy-base construction path depends on the
-server-driven multiplayer session and fails offline. A real live mode would need
-a custom arena spawner (build both armies from snapshots into one scene) plus a
-shared result authority, instead of reusing the async gauntlet.
+Copy the DLL into a **disposable test copy** of the game at
+`<game dir>/BepInEx/plugins/NineKingsVersus/`. Never modify a shared install or
+real saves. The build expects BepInEx/Unity assemblies in the test copy; see
+`Directory.Build.props` for the `GameDir` property.
 
-## Files
+## Running a match
 
-- `src/NineKingsVersus/VersusNet.cs` — LAN transport, ready/go and result messages.
-- `src/NineKingsVersus/LocalSessionProbe.cs` — session/snapshot and board probes.
-- `src/NineKingsVersus/VersusBehaviour.cs` — flag-driven probe orchestration.
-- `src/NineKingsVersus/Patches.cs` — Harmony instrumentation and submission block.
-- `games/9-kings/NOTES.md` (in the private workspace) — full probe history.
+In `<game dir>/BepInEx/versus/`, create `net.json`:
 
-## Safety
+```json
+{ "mode": "host", "peer": "127.0.0.1", "port": 28764 }
+```
 
-- Never modify the shared game install or real saves.
-- `OfflineGatePatch` disables the game's internet check; `BlockSubmitPatch`
-  blocks online run submission.
-- All testing used disposable copies of the game. The owner's save backup was
-  read-only and remains intact.
+Join copies use `"mode": "join"` and the host's LAN IP. Then create empty flag
+files in the same directory. The menu toggles write these for you.
+
+Useful flags:
+- `attach-flow` — load a captured run at startup
+- `skip-intro` — jump straight to MainMenu
+- `auto-versus` — synchronized wave start
+- `multi-bot` — one opponent deck per enemy king
+- `multi-preview` — render several opponent bases
+- `avatar-bar` — right-side opponent faces
+- `refresh-map` — run the official enemy-area builder
+- `custom-deck` — single-opponent deck replacement
+- `show-preview` — single opponent base preview
+- `dump-troops` / `dump-menu` / `dump-areas` — development probes
+
+Press **Ctrl+Alt+F11** or click the **VERSUS** button to open the menu.
+
+## Known issues
+
+- Only loopback two-process tests have been run; a real two-PC LAN test is still
+  needed.
+- Combat in true multiplayer mode can be unstable: entity counts fluctuate and
+  waves may advance before the result lands.
+- The result is usually decided by the first life loss rather than total army
+  destruction; elimination detection exists but rarely triggers first.
+- The two local copies share the same `LocalLow` settings folder, causing
+  save-file conflicts; end-screen calls have a retry.
+- `GameplayUI_MultiplayerScreen.PopulateEnemyFaces` (the original avatar widget)
+  NREs outside the hub-driven multiplayer start; the `avatar-bar` flag builds a
+  substitute from the game's sprites.
+- No installer or one-click host/join flow yet.
+
+## Reverse engineering notes
+
+`docs/FINDINGS.md` records the Il2CppDumper/Ghidra workflow, method addresses,
+decompiled behaviour, and the reasoning behind the chosen approach. All dumps and
+decompiled output live in the private workspace, not in this repo.
