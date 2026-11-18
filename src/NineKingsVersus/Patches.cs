@@ -215,9 +215,17 @@ internal static class Patches
             try
             {
                 LocalSessionProbe.EnsureEnemySnapshot("SpawnWave");
-                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "custom-deck")))
+                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "custom-deck")) ||
+                    File.Exists(Path.Combine(VersusPlugin.DataDir, "multi-bot")))
                 {
-                    OpponentDeck.Install(LocalSessionProbe.GetOpponentSnapshot());
+                    if (File.Exists(Path.Combine(VersusPlugin.DataDir, "multi-bot")))
+                    {
+                        OpponentDeck.InstallBots();
+                    }
+                    else
+                    {
+                        OpponentDeck.Install(LocalSessionProbe.GetOpponentSnapshot());
+                    }
                 }
 
                 if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")))

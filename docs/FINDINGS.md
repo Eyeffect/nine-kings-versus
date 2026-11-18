@@ -227,6 +227,12 @@ Attempted to call it from the probe with session runs, real managed delegates, a
 
 For "bots with real bases": the session can carry a run per king (already implemented), and each run's snapshot can drive both a `DeckSo` (army) and a `MultiplayerRemoteMapPreview` (base). The remaining work is iterating bots rather than a single opponent.
 
+## Multiple bots with distinct decks
+
+Added `OpponentDeck.InstallBots()` behind a `multi-bot` flag. It iterates `Core.Wave.GetEnemyKings()`, resolves each king's run via `Session.GetDataByPlayerKing(king.Owner)`, builds a separate runtime `DeckSo` from that run's wave snapshot, and installs it at `KingSo + 0x1F8`. The deck list is refactored into `BuildDeck(snapshot)` reused by both single-opponent and multi-bot paths.
+
+Single-process validation: `bots: installed 5 distinct bot decks`. So a match can now have several AI opponents, each fighting with an army built from its own snapshot. The avatar bar (`PopulateEnemyFaces`) still throws NRE from the probe path, so the left-side avatar UI remains unimplemented.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
