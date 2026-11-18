@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using UnityEngine;
 
@@ -29,6 +30,17 @@ internal static class TroopCatalog
             {
                 VersusPlugin.Log.LogWarning("troop catalog: no TroopSo assets found");
                 return;
+            }
+
+            var sample = assets[0];
+            var allFlags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                           System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+            VersusPlugin.Log.LogInfo(
+                $"troop catalog: sample={sample.GetType().FullName} " +
+                $"props={sample.GetType().GetProperties(allFlags).Length} fields={sample.GetType().GetFields(allFlags).Length}");
+            foreach (var p in sample.GetType().GetProperties(allFlags).Take(12))
+            {
+                VersusPlugin.Log.LogInfo($"troop catalog: prop {p.PropertyType.Name} {p.Name}");
             }
 
             var entries = new List<Entry>();
@@ -64,8 +76,30 @@ internal static class TroopCatalog
         var type = source.GetType();
         var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                     System.Reflection.BindingFlags.Instance;
-        foreach (var field in type.GetFields(flags))
+        var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
+            "transform", "gameObject", "hideFlags", "name"
+        };
+
+        var current = source.GetType();
+        while (current != null && current != typeof(object))
+        {
+            CollectType(source, current, output, depth, flags, skip);
+            current = current.BaseType;
+        }
+    }
+
+    private static void CollectType(object source, Type type, Dictionary<string, double> output,
+        int depth, System.Reflection.BindingFlags flags, HashSet<string> skip)
+    {
+        var declared = flags | System.Reflection.BindingFlags.DeclaredOnly;
+        foreach (var field in type.GetFields(declared))
+        {
+            if (skip.Contains(field.Name))
+            {
+                continue;
+            }
+
             object value;
             try
             {
@@ -76,23 +110,48 @@ internal static class TroopCatalog
                 continue;
             }
 
-            if (value == null)
+            AddValue(value, field.Name, output, depth);
+        }
+
+        foreach (var property in type.GetProperties(declared))
+        {
+            if (skip.Contains(property.Name) || property.GetIndexParameters().Length > 0)
             {
                 continue;
             }
 
-            if (value is double || value is float || value is int || value is long || value is short || value is bool)
+            object value;
+            try
             {
-                output[field.Name] = Convert.ToDouble(value);
+                value = property.GetValue(source);
             }
-            else if (value is string text)
+            catch
             {
-                output[field.Name + "_len"] = text.Length;
+                continue;
             }
-            else if (depth < 2 && !value.GetType().IsPrimitive && !(value is UnityEngine.Object))
-            {
-                Collect(value, output, depth + 1);
-            }
+
+            AddValue(value, property.Name, output, depth);
+        }
+    }
+
+    private static void AddValue(object value, string key, Dictionary<string, double> output, int depth)
+    {
+        if (value == null)
+        {
+            return;
+        }
+
+        if (value is double || value is float || value is int || value is long || value is short || value is bool)
+        {
+            output[key] = Convert.ToDouble(value);
+        }
+        else if (value is string text)
+        {
+            output[key + "_len"] = text.Length;
+        }
+        else if (depth < 3 && !(value is string) && !(value is System.Collections.IEnumerable))
+        {
+            Collect(value, output, depth + 1);
         }
     }
 

@@ -208,13 +208,15 @@ internal static class CustomArena
             var critMultFallback = Stat(stats, "CritMultiplier", 1.5f);
             var projectilesFallback = Stat(stats, "Projectiles", 0f);
 
-            var maxHp = Mathf.Max(20f, CatalogStat(catalog, hpFallback, "maxhp", "health", "hp"));
-            var damage = Mathf.Max(3f, CatalogStat(catalog, strengthFallback, "strength", "damage", "attack"));
-            var speed = Mathf.Clamp(CatalogStat(catalog, speedFallback, "walkspeed", "speed", "movespeed") * 70f, 25f, 180f);
-            var attackInterval = Mathf.Clamp(1f / Mathf.Max(0.2f, CatalogStat(catalog, attackFallback, "attackspeed", "attacks")), 0.4f, 2.5f);
-            var critChance = Mathf.Clamp01(CatalogStat(catalog, critChanceFallback, "crit_chance", "critchance"));
-            var critMultiplier = Mathf.Max(1f, CatalogStat(catalog, critMultFallback, "crit_multiplier", "critmultiplier"));
-            var ranged = CatalogStat(catalog, projectilesFallback, "projectiles", "range") > 0f;
+            var maxHp = Mathf.Max(20f, CatalogStat(catalog, hpFallback, "MaxHP"));
+            var damage = Mathf.Max(3f, CatalogStat(catalog, strengthFallback, "AttackStrength", "Strength", "Damage"));
+            var speed = Mathf.Clamp(CatalogStat(catalog, speedFallback, "WalkSpeed") * 70f, 25f, 180f);
+            var attackDelay = CatalogStat(catalog, attackFallback * 60f, "AttackDelay");
+            var attackInterval = Mathf.Clamp(attackDelay / 60f, 0.3f, 2.5f);
+            var critChance = Mathf.Clamp01(CatalogStat(catalog, critChanceFallback, "CriticalChance"));
+            var critMultiplier = Mathf.Max(1f, CatalogStat(catalog, critMultFallback, "CriticalMultiplier"));
+            var ranged = CatalogStat(catalog, projectilesFallback, "ProjectileBased", "IsRanged", "Projectiles") > 0f;
+            var attackRange = CatalogStat(catalog, 1f, "AttackRange") * 30f;
             var size = Mathf.Clamp(Stat(area, "EntitySize", 1f) * 16f, 14f, 34f);
             var count = Mathf.Clamp(area.TroopQuantity / 9, 1, 3);
 
@@ -243,7 +245,7 @@ internal static class CustomArena
                     MaxHp = maxHp,
                     Damage = damage,
                     Speed = speed,
-                    Range = ranged ? 170f : 30f,
+                    Range = ranged ? Mathf.Max(120f, attackRange) : Mathf.Max(26f, attackRange),
                     AttackInterval = attackInterval,
                     CritChance = critChance,
                     CritMultiplier = critMultiplier,
@@ -260,6 +262,17 @@ internal static class CustomArena
         if (values == null)
         {
             return fallback;
+        }
+
+        foreach (var keyword in keywords)
+        {
+            foreach (var pair in values)
+            {
+                if (string.Equals(pair.Key, keyword, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (float)pair.Value;
+                }
+            }
         }
 
         foreach (var keyword in keywords)
