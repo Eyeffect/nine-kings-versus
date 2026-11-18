@@ -115,6 +115,15 @@ Further iterations still showed the same failures:
 
 Decision: stop iterating on this prototype. The LAN transport, native in-game menu, per-wave snapshot sync, arena army spawner, and diagnostics work as isolated pieces, but the game's faction/AI and victory flow cannot be driven reliably from the async-PvP surface offline. A real live 1v1 needs an engine-level rewrite (custom combat scene and result UI) rather than reusing the shipped gauntlet.
 
+## Decompiled game flow (Ghidra, second pass)
+
+- `GameplayUI_PlacingView.StartBattle` (0x18067D8D0) does **not** spawn enemies directly. It sets `GameplayData.WaitingForEnemiesToSpawn = true`, clears several counters, calls `InvokePreBeginEvents()`, then `ProcessStartEffects(Action onFinish)` on the object at `GameplayData + 0x1A8`, and stores the wave properties. The callback finishes the transition — this explains why two presses were needed in the probe flow.
+- `Wave.SpawnWave` (0x18062A770) obtains the wave king, calls `GetWaveCombatDeck(king)`, then `deck.GetBattlers()`, then private `CreateEnemies(position, onComplete, enemyTypes, enemies)`. The enemy army is the king's combat deck, not snapshot area counts.
+- `Wave.GetWaveCombatDeck` (0x1806211A0) uses `KingSo + 0x1F8` as the custom deck when `HasCustomDeck` is true; otherwise it falls back to `KingCollection.GetEntry(king.Owner)` and that entry's deck at +0x1F8.
+- `DeckSo.CreateRuntimeCopy` (0x1806C40E0) returns null unless `cards` and all three starter cards are non-null; the source deck's `StartCards_SlotXX` arrays supply them.
+- `MultiplayerGameSnapshots.GetWaveSnapshot` (0x1808094C0) searches the snapshot list by wave number, with a separate comparator path when `fetchClosestPreviousSnapshot` is true.
+- `Core.Wave.OnCompleteGame(EndUIType)` is the official end-screen entry; Victory=0, VictoryYear99=1, Defeat=2.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
