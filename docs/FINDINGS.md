@@ -262,6 +262,14 @@ Added `native-menu` flag → `LocalSessionProbe.ShowNativeMenu()` calls `Gamepla
 
 The long-term native-menu approach is to reuse these `UISubController` panels instead of the hand-built UGUI overlays, populating them through their own `Show`/`Populate` methods once the hub-driven initialization is reproduced.
 
+## Native avatar bar attempt — blocked
+
+Probed the live `GameplayUI_MultiplayerScreen` object at its native field offsets: `m_Holder`, `m_UserFaceTemplate`, `m_EnemyKingdomUI`, `m_Faces`, the three dictionaries, `m_HolderRectTransform` and `m_HolderLayoutGroup` are **all non-null**. Calling `PopulateEnemyFaces` still throws NRE, even after filtering `Session.Data` to only runs whose `kingId` resolves through `MultiplayerManager.TryResolveKing`, and with real managed callbacks.
+
+Conclusion: the official right-side avatar widget cannot be populated from our probe path. It is likely bound to the hub-driven multiplayer start's initialization sequence (or expects `MultiplayerManager` state we don't reproduce). Our `avatar-bar` flag builds a substitute from the game's face sprites — it is explicitly **not** the official widget.
+
+`native-menu` (`GameplayUI.ShowSingleUI(MultiplayerScreen)`) calls succeeded but presented a full-screen subcontroller that locked normal controls; it is not a usable overlay menu. The native VERSUS button in the main menu is the only native menu integration that works.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:

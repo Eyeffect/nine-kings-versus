@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 using MultiplayerSystems;
@@ -538,6 +539,83 @@ internal static class LocalSessionProbe
         catch (Exception e)
         {
             VersusPlugin.Log.LogError($"start-mp failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    /// <summary>
+    /// Dumps the live MultiplayerScreen's serialized fields, then tries the real
+    /// PopulateEnemyFaces so we can see which field is null.
+    /// </summary>
+    public static void ProbeMpUi()
+    {
+        try
+        {
+            var screen = GameplayInterface.GameplayUI.MultiplayerScreen;
+            if (screen == null)
+            {
+                VersusPlugin.Log.LogWarning("mpui: screen missing");
+                return;
+            }
+
+            var offsets = new System.Collections.Generic.Dictionary<string, int>
+            {
+                { "m_Holder", 0x30 },
+                { "m_UserFaceTemplate", 0x38 },
+                { "m_EnemyKingdomUI", 0x60 },
+                { "m_Faces", 0x90 },
+                { "m_PlayerNameByPlayerId", 0x98 },
+                { "m_EnemyKingByPlayerId", 0xA0 },
+                { "m_RunDataByPlayerId", 0xA8 },
+                { "m_HolderRectTransform", 0xB8 },
+                { "m_HolderLayoutGroup", 0xC8 },
+                { "m_OnFaceClicked", 0x100 },
+            };
+            foreach (var pair in offsets)
+            {
+                var value = Marshal.ReadIntPtr(screen.Pointer, pair.Value);
+                VersusPlugin.Log.LogInfo($"mpui: {pair.Key} @ +0x{pair.Value:X} = 0x{value.ToInt64():X}");
+            }
+
+            var session = MultiplayerSystems.MultiplayerManager.Session;
+            if (session?.Data == null)
+            {
+                VersusPlugin.Log.LogWarning("mpui: no session");
+                return;
+            }
+
+            System.Action<MultiplayerSystems.MultiplayerRunData> clicked = run => { };
+            System.Func<bool> canInteract = () => true;
+            var valid = new Il2CppReferenceArray<MultiplayerSystems.MultiplayerRunData>(session.Data.Length);
+            var count = 0;
+            for (var i = 0; i < session.Data.Length; i++)
+            {
+                var run = session.Data[i];
+                if (run != null &&
+                    MultiplayerSystems.MultiplayerManager.TryResolveKing(run.kingId, out var king) && king != null)
+                {
+                    valid[count++] = run;
+                }
+            }
+
+            var filtered = new Il2CppReferenceArray<MultiplayerSystems.MultiplayerRunData>(count);
+            for (var i = 0; i < count; i++)
+            {
+                filtered[i] = valid[i];
+            }
+
+            try
+            {
+                screen.PopulateEnemyFaces(filtered, clicked, canInteract);
+                VersusPlugin.Log.LogInfo($"mpui: PopulateEnemyFaces OK with {count}/{session.Data.Length} runs");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"mpui: PopulateEnemyFaces failed: {(e.InnerException ?? e).Message}");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"mpui probe failed: {e.Message}");
         }
     }
 
