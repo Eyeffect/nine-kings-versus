@@ -187,6 +187,19 @@ Added Harmony bool prefixes on `Core.Wave.SetWave` and `Core.Wave.CompleteWave` 
 
 Two-process validation: after the result, both peers stayed at wave 16 with `map=active`, enemy base areas present, and no further wave starts. Host `Defeat`, join `Victory`, official end screens. Post-result hand growth remained in the join copy; extended the periodic hand trim to the custom-deck configuration as well.
 
+## Full multiplayer decompilation
+
+Scraped every multiplayer/gauntlet/snapshot/profile/matchmaking method from `dump.cs` (480 methods) into `local/dump/mp-methods.md`-style surface report, then decompiled all 480 into `local/dump/multiplayer-decompiled.txt` (1.4 MB) with PyGhidra. Local-only artifacts; no game assets in the repo.
+
+Important confirmations from the full corpus:
+- `MultiplayerSession.GetDataByPlayerKing(CardOwnership)` (0x180810670) simply scans `Session.Data` comparing each run's `kingId` at `+0x28` — this is why filling the session with a run per king made `RefreshMultiplayerMap` resolve an opponent.
+- `MultiplayerManager.EndMultiplayerRun` (0x18080BC60) is a server submit/abandon path; it is not usable offline.
+- `GameplayUI_EndUI_Stats.ShowMultiplayerResults` (0x1804F58E0) is the official multiplayer results screen. Wired it after `OnCompleteGame`.
+- `GameplayUI_MultiplayerEnemyDeathScreen.Show(KingSo, GameSnapshot, bool)` (0x18054BF00) is the enemy-death presentation, used by the official async flow.
+- `TryJumpToMultiplayerVictoryWave` (0x1804F0EA0) checks `WaveOptions+0x2B8` and the current wave, then sets a flag on a run and calls a wave setter; it only works when a multiplayer run is actually active.
+
+Best approach confirmed: keep the official Gameplay scene, install the opponent's deck on all enemy kings, build base areas with `RefreshMultiplayerMap`, sync peers over LAN, and use `OnCompleteGame` + `ShowMultiplayerResults` for a shared result. The async gauntlet/server path remains unusable offline.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:

@@ -97,6 +97,35 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
         }
 
+        var dumpAreas = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-areas");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(dumpAreas))
+        {
+            System.IO.File.Delete(dumpAreas);
+            try
+            {
+                var areas = UnityEngine.Object.FindObjectsOfType<Core.Kingdoms.KingdomArea>();
+                VersusPlugin.Log.LogInfo($"dump-areas: total={areas?.Length ?? 0}");
+                if (areas != null)
+                {
+                    foreach (var area in areas)
+                    {
+                        if (area == null)
+                        {
+                            continue;
+                        }
+
+                        var go = area.gameObject;
+                        VersusPlugin.Log.LogInfo(
+                            $"dump-areas: {area.name} pos={go.transform.position} active={go.activeInHierarchy}");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"dump-areas failed: {e.Message}");
+            }
+        }
+
         var refreshMap = System.IO.Path.Combine(VersusPlugin.DataDir, "refresh-map");
         if (_lastScene == "Gameplay" && System.IO.File.Exists(refreshMap))
         {
@@ -1471,6 +1500,21 @@ public sealed class VersusBehaviour : MonoBehaviour
 
             method.Invoke(null, new object[] { type });
             VersusPlugin.Log.LogInfo($"match-result: OnCompleteGame({type})");
+
+            try
+            {
+                var stats = GameplayInterface.GameplayUI.Stats;
+                if (stats != null)
+                {
+                    stats.ShowMultiplayerResults();
+                    VersusPlugin.Log.LogInfo("match-result: ShowMultiplayerResults called");
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"match-result: ShowMultiplayerResults failed: {e.Message}");
+            }
+
             _pendingEndType = null;
         }
         catch (Exception e)
