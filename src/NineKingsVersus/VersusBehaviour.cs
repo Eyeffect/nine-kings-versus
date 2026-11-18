@@ -1,0 +1,1146 @@
+using System;
+using System.Reflection;
+using Il2CppInterop.Runtime.Injection;
+using UnityEngine;
+
+namespace NineKingsVersus;
+
+/// <summary>
+/// Injected component. Provisional hotkeys while the mod is a probe:
+///   F9  diagnose scene / console / difficulty assets / snapshot
+///   F10 try GameplayManager.StartNewGame with the first difficulty asset
+///   F7  capture the current board snapshot into memory
+///   F8  inject the captured snapshot as the multiplayer enemy and refresh the map
+/// Registered from <see cref="VersusPlugin.Load"/>.
+/// </summary>
+public sealed class VersusBehaviour : MonoBehaviour
+{
+    private static Gameplay.GameSnapshot _cached;
+    private static string _lastScene;
+    private static bool _autoProbe;
+    private static bool _hubProbePending;
+    private static bool _attachFlowPending;
+    private static bool _backupLoadPending;
+    private static bool _attachDone;
+    private static float _verifyAt = -1f;
+    private static float _secondBattleAt = -1f;
+    private static int _lastNetStateVersion;
+    private static int _handshakeWave = -1;
+    private static bool _readySent;
+    private static bool _goSent;
+    private static bool _autoStarted;
+    private static bool _resultHandled;
+    private static int _verifySamples;
+    private float _autoAt = -1f;
+    private static float _attachRetryAt = -1f;
+    private float _heartbeatAt = -1f;
+
+    public VersusBehaviour(IntPtr pointer) : base(pointer)
+    {
+    }
+
+    public static void Install()
+    {
+        ClassInjector.RegisterTypeInIl2Cpp<VersusBehaviour>();
+        var go = new GameObject("NineKingsVersus");
+        UnityEngine.Object.DontDestroyOnLoad(go);
+        go.AddComponent<VersusBehaviour>();
+        VersusPlugin.Log.LogInfo("versus probe ready: Ctrl+Alt+F9 diagnose, F7 capture, F8 inject");
+    }
+
+    private void Start()
+    {
+        _autoProbe = System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-probe"));
+        if (_autoProbe)
+        {
+            _autoAt = Time.time + 12f;
+            _heartbeatAt = Time.time + 30f;
+            VersusPlugin.Log.LogInfo("auto-probe enabled: diagnose in 12s");
+        }
+    }
+
+    private void Update()
+    {
+        TrackScene();
+        VersusNet.Tick();
+
+        // Rebuild the opponent's board when a fresh state arrives and the run is not
+        // mid-combat (rebuilding during combat would despawn the fighting units).
+        if (VersusNet.StateVersion != _lastNetStateVersion)
+        {
+            _lastNetStateVersion = VersusNet.StateVersion;
+            var data = Core.Wave.Data;
+            if (_lastScene == "Gameplay" && data != null && !data.Running)
+            {
+                VersusPlugin.Log.LogInfo("net: rebuilding opponent board from peer state");
+                LocalSessionProbe.BuildEnemyBoard();
+            }
+        }
+
+        var sessionProbe = System.IO.Path.Combine(VersusPlugin.DataDir, "probe-session");
+        if ((_lastScene == "MainMenu" || _lastScene == "MultiplayerHub") && System.IO.File.Exists(sessionProbe))
+        {
+            System.IO.File.Delete(sessionProbe);
+            LocalSessionProbe.Run();
+        }
+
+        // Deferred: LoadScene may not activate the hub scene within this frame, so the
+        // population probe waits until MultiplayerHub is the active scene.
+        if (_hubProbePending && _lastScene == "MultiplayerHub")
+        {
+            _hubProbePending = false;
+            LocalSessionProbe.Run();
+        }
+
+        // probe-hub: load the MultiplayerHub scene (index 9) from the main menu so
+        // MultiplayerManager wakes up, then re-run the population probe there once
+        // the scene is active.
+        var hubProbe = System.IO.Path.Combine(VersusPlugin.DataDir, "probe-hub");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(hubProbe))
+        {
+            System.IO.File.Delete(hubProbe);
+            try
+            {
+                VersusPlugin.Log.LogInfo("probe-hub: loading MultiplayerHub scene (index 9), probe deferred until scene active");
+                UnityEngine.SceneManagement.SceneManager.LoadScene(9);
+                _hubProbePending = true;
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"probe-hub failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        if (_autoProbe && Time.time >= _heartbeatAt)        {
+            _heartbeatAt = Time.time + 30f;
+            VersusPlugin.Log.LogInfo($"heartbeat scene={_lastScene} t={Time.time:F0}");
+        }
+
+        if (_autoAt > 0f && Time.time >= _autoAt)
+        {
+            _autoAt = -1f;
+            Diagnose("auto");
+            ProbeCommands();
+            if (System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-start")))
+            {
+                TryStartRun();
+            }
+        }
+
+        // attach-flow: load the hub scene so MultiplayerManager.Instance exists, attach
+        // the probe session there, then start a run through Core.Wave.StartNewGame with
+        // its own isMultiplayer=true parameter (avoids flipping IsMultiplayer mid-run).
+        var attachFlow = System.IO.Path.Combine(VersusPlugin.DataDir, "attach-flow");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(attachFlow))
+        {
+            System.IO.File.Delete(attachFlow);
+            _attachFlowPending = true;
+            VersusPlugin.Log.LogInfo("attach-flow: loading hub so MultiplayerManager wakes before run start");
+            UnityEngine.SceneManagement.SceneManager.LoadScene(9);
+        }
+        if (_attachFlowPending && _lastScene == "MultiplayerHub")
+        {
+            _attachFlowPending = false;
+            VersusPlugin.Log.LogInfo("attach-flow: hub active, attaching session and starting multiplayer run");
+            if (LocalSessionProbe.AttachForMultiplayerStart(out _))
+            {
+                LocalSessionProbe.LoadProbeRun();
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("attach-flow: session not attached, run not started");
+            }
+        }
+
+        var startBattle = System.IO.Path.Combine(VersusPlugin.DataDir, "start-battle");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+            && System.IO.File.Exists(startBattle))
+        {
+            System.IO.File.Delete(startBattle);
+            BeginVersusBattle("start-battle");
+        }
+
+        // auto-versus: with a connected peer, exchange ready/go and start the same
+        // wave on both machines, then let the second press begin combat.
+        var autoVersus = System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+            && System.IO.File.Exists(autoVersus) && VersusNet.Connected)
+        {
+            AutoVersusStep(Core.Wave.Data.Wave);
+        }
+
+        if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
+            && System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")))
+        {
+            MatchResultStep();
+        }
+
+        // wave-begin: use the hand UI's own Wave_Begin hook after satisfying the
+        // hand-card gate (<=2 cards, 0 on final round).
+        var waveBegin = System.IO.Path.Combine(VersusPlugin.DataDir, "wave-begin");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+            && System.IO.File.Exists(waveBegin))
+        {
+            System.IO.File.Delete(waveBegin);
+            try
+            {
+                var data = Core.Wave.Data;
+                var hand = GameplayInterface.GameplayUI.HandCards;
+                VersusPlugin.Log.LogInfo($"wave-begin: wave={data.Wave} cards={hand?.CardsCount.ToString() ?? "n/a"} " +
+                    $"getStartState={hand?.GetStartState().ToString() ?? "n/a"} " +
+                    $"running={data.Running} combatOn={data.CombatOn} waitingForEnemies={data.waitingForEnemiesToSpawn}");
+                hand?.Clear();
+                hand?.Wave_Begin();
+                VersusPlugin.Log.LogInfo($"wave-begin: Wave_Begin invoked; running={data.Running} combatOn={data.CombatOn} " +
+                    $"waitingForEnemies={data.waitingForEnemiesToSpawn} cards={hand?.CardsCount.ToString() ?? "n/a"}");
+                ScheduleVerification(10);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"wave-begin failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        // begin-combat: satisfy the game's hand-card gate (<=2 cards, 0 on final round)
+        // and then start combat through the game's own API.
+        var beginCombat = System.IO.Path.Combine(VersusPlugin.DataDir, "begin-combat");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+            && System.IO.File.Exists(beginCombat))
+        {
+            System.IO.File.Delete(beginCombat);
+            try
+            {
+                var data = Core.Wave.Data;
+                var hand = GameplayInterface.GameplayUI.HandCards;
+                VersusPlugin.Log.LogInfo($"begin-combat: wave={data.Wave} cards={hand?.CardsCount.ToString() ?? "n/a"} " +
+                    $"running={data.Running} combatOn={data.CombatOn} waitingForEnemies={data.waitingForEnemiesToSpawn} " +
+                    $"snapshot={(Core.Wave.CurrentMultiplayerEnemySnapshot == null ? "null" : "set")}");
+
+                if (hand != null && hand.CardsCount > 0)
+                {
+                    hand.Clear();
+                }
+
+                data.SetWaitingToBegin(false);
+                data.SetWaitingToOpenUI(false);
+                data.SetRunning(true);
+                Core.Wave.StartCombat(false);
+                VersusPlugin.Log.LogInfo($"begin-combat: after running={data.Running} combatOn={data.CombatOn} " +
+                    $"waitingForEnemies={data.waitingForEnemiesToSpawn}");
+                ScheduleVerification(10);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"begin-combat failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        // empty-hand: the base game waits for the hand to be reduced (<=2 cards; 0 on
+        // the final round) before combat begins. Clear it and see whether the staged
+        // wave starts on its own.
+        var emptyHand = System.IO.Path.Combine(VersusPlugin.DataDir, "empty-hand");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+            && System.IO.File.Exists(emptyHand))
+        {
+            System.IO.File.Delete(emptyHand);
+            try
+            {
+                var hand = GameplayInterface.GameplayUI.HandCards;
+                VersusPlugin.Log.LogInfo($"empty-hand: before cards={hand?.CardsCount.ToString() ?? "n/a"} " +
+                    $"running={Core.Wave.Data.Running} combatOn={Core.Wave.Data.CombatOn} " +
+                    $"waitingForEnemies={Core.Wave.Data.waitingForEnemiesToSpawn}");
+                hand?.Clear();
+                VersusPlugin.Log.LogInfo($"empty-hand: after cards={hand?.CardsCount.ToString() ?? "n/a"}");
+                ScheduleVerification(8);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"empty-hand failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        // build-enemy: recreate the opponent's kingdom from their snapshot using the
+        // game's own SetMultiplayerCard / SetMultiplayerLife commands.
+        var buildEnemy = System.IO.Path.Combine(VersusPlugin.DataDir, "build-enemy");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+            && System.IO.File.Exists(buildEnemy))
+        {
+            System.IO.File.Delete(buildEnemy);
+            try
+            {
+                var map = Core.Wave.MultiplayerMap;
+                if (map != null && !map.activeSelf)
+                {
+                    map.SetActive(true);
+                    VersusPlugin.Log.LogInfo("build-enemy: MultiplayerMap activated");
+                }
+
+                LocalSessionProbe.BuildEnemyBoard();
+                ScheduleVerification(8);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"build-enemy flag failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        // inspect-spawn: one-shot dump of spawn API types and writability.
+        var inspectSpawn = System.IO.Path.Combine(VersusPlugin.DataDir, "inspect-spawn");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(inspectSpawn))
+        {
+            System.IO.File.Delete(inspectSpawn);
+            LocalSessionProbe.InspectSpawnApi();
+        }
+
+        // load-backup: load an authentic multiplayer save (wave 32, king Spells) from
+        // the read-only backup, with no fabricated session, to observe the game's own
+        // multiplayer wave behaviour as a baseline.
+        var loadBackup = System.IO.Path.Combine(VersusPlugin.DataDir, "load-backup");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(loadBackup))
+        {
+            System.IO.File.Delete(loadBackup);
+            _backupLoadPending = true;
+            VersusPlugin.Log.LogInfo("load-backup: loading hub before authentic multiplayer save");
+            UnityEngine.SceneManagement.SceneManager.LoadScene(9);
+        }
+        if (_backupLoadPending && _lastScene == "MultiplayerHub")
+        {
+            _backupLoadPending = false;
+            VersusPlugin.Log.LogInfo("load-backup: hub active, loading authentic multiplayer save");
+            LocalSessionProbe.LoadBackupRun();
+        }
+
+        // Verification only: once a Gameplay run is live, report session state once.
+        if (!_attachDone && _lastScene == "Gameplay" && Time.time >= _attachRetryAt)
+        {
+            _attachRetryAt = Time.time + 5f;
+            var session = MultiplayerSystems.MultiplayerManager.Session;
+            VersusPlugin.Log.LogInfo(
+                $"attach-flow watch: session={(session == null ? "null" : $"gauntlet={session.GauntletEnemies?.Count ?? -1} active={session.GauntletActive}")} " +
+                $"runMultiplayer={(Core.Wave.Data == null ? "no-data" : Core.Wave.Data.IsMultiplayer.ToString())}");
+            if (session != null && Core.Wave.Data != null && Core.Wave.Data.IsMultiplayer)
+            {
+                _attachDone = true;
+                VersusPlugin.Log.LogInfo("attach-flow watch: multiplayer run live; waiting for wave start");
+            }
+        }
+
+        // next-wave: advance the live multiplayer run through the game's own SetWave
+        // flow (PrepareMultiplayerGauntlet -> SpawnWave -> StartCombat with the
+        // opponent snapshot injected at those entry points), then sample for a while.
+        var nextWave = System.IO.Path.Combine(VersusPlugin.DataDir, "next-wave");
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null
+            && Core.Wave.Data.Wave >= 1 && Core.Wave.Data.IsMultiplayer
+            && System.IO.File.Exists(nextWave))
+        {
+            System.IO.File.Delete(nextWave);
+            try
+            {
+                var data = Core.Wave.Data;
+                var target = data.Wave + 1;
+                VersusPlugin.Log.LogInfo(
+                    $"next-wave: from wave={data.Wave} running={data.Running} combatOn={data.CombatOn} " +
+                    $"snapshot={(Core.Wave.CurrentMultiplayerEnemySnapshot == null ? "null" : "set")}");
+                LocalSessionProbe.EnsureEnemySnapshot("next-wave");
+                Core.Wave.SetWave(target, true, false, false);
+                VersusPlugin.Log.LogInfo($"next-wave: SetWave({target}, skipShop=true, showUIs=false) invoked");
+                ScheduleVerification(12);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"next-wave failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        if (_secondBattleAt > 0f && Time.time >= _secondBattleAt)
+        {
+            _secondBattleAt = -1f;
+            if (_resultHandled)
+            {
+                return;
+            }
+
+            try
+            {
+                var view = UnityEngine.Object.FindObjectOfType<Core.GameplayUI_PlacingView>();
+                var data = Core.Wave.Data;
+                var hand = GameplayInterface.GameplayUI.HandCards;
+                VersusPlugin.Log.LogInfo($"start-battle2: cards={hand?.CardsCount.ToString() ?? "n/a"} " +
+                    $"running={data?.Running} combatOn={data?.CombatOn} waitingToBegin={data?.WaitingToBegin} " +
+                    $"startState={view?.GetStartState().ToString() ?? "n/a"}");
+                if (hand != null && hand.CardsCount > 0)
+                {
+                    hand.Clear();
+                }
+
+                var method = typeof(Core.GameplayUI_PlacingView).GetMethod("StartBattle",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance);
+                method?.Invoke(view, null);
+                data?.SetWaitingToBegin(false);
+                data?.SetRunning(true);
+                Core.Wave.StartCombat(false);
+                VersusPlugin.Log.LogInfo($"start-battle2: after running={data?.Running} combatOn={data?.CombatOn} " +
+                    $"waitingToBegin={data?.WaitingToBegin}");
+                ScheduleVerification(8);
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"start-battle2 failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+            }
+        }
+
+        if (_verifyAt > 0f && Time.time >= _verifyAt)
+        {
+            _verifyAt = -1f;
+            try
+            {
+                VersusPlugin.Log.LogInfo(
+                    $"verify: wave={Core.Wave.Data?.Wave} running={Core.Wave.Data?.Running} waitingToBegin={Core.Wave.Data?.WaitingToBegin} " +
+                    $"combatOn={Core.Wave.Data?.CombatOn} spawning={Core.Wave.Data?.SpawningEnemies} alliesSpawning={Core.Wave.Data?.AreasSpawningAllies} " +
+                    $"snapshot={(Core.Wave.CurrentMultiplayerEnemySnapshot == null ? "null" : "set")} " +
+                    $"map={(Core.Wave.MultiplayerMap == null ? "null" : Core.Wave.MultiplayerMap.activeSelf ? "active" : "inactive")} " +
+                    $"enemyTroops={Core.Kingdoms.KingdomAreaManager.GetAreasWithTroops(true)?.Count ?? -1} " +
+                    $"enemyBig={Core.Kingdoms.KingdomAreaManager.GetAreasWithAnythingPlaced(true)?.Count ?? -1} " +
+                    $"playerTroops={Core.Kingdoms.KingdomAreaManager.GetAreasWithTroops(false)?.Count ?? -1} " +
+                    $"handCards={(GameplayInterface.GameplayUI.HandCards == null ? "n/a" : GameplayInterface.GameplayUI.HandCards.CardsCount.ToString())} " +
+                    $"waitingForEnemies={Core.Wave.Data?.waitingForEnemiesToSpawn}");
+
+                var entities = UnityEngine.Object.FindObjectsOfType<Core.Entities.Entity>();
+                var enemyEntities = 0;
+                var myEntities = 0;
+                var multiplayerEnemies = 0;
+                if (entities != null)
+                {
+                    foreach (var entity in entities)
+                    {
+                        try
+                        {
+                            if (entity.IsEnemy)
+                            {
+                                enemyEntities++;
+                            }
+                            else
+                            {
+                                myEntities++;
+                            }
+
+                            if (entity.IsMultiplayerEnemy)
+                            {
+                                multiplayerEnemies++;
+                            }
+                        }
+                        catch
+                        {
+                            // Entity may be mid-destroy; skip.
+                        }
+                    }
+                }
+
+                VersusPlugin.Log.LogInfo(
+                    $"verify entities: total={entities?.Length ?? 0} player={myEntities} enemy={enemyEntities} multiplayerEnemy={multiplayerEnemies} " +
+                    $"waveTroops={Core.Wave.WaveTroops?.Length ?? -1} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
+
+                if (_verifySamples > 0)
+                {
+                    _verifySamples--;
+                    if (_verifySamples > 0)
+                    {
+                        _verifyAt = Time.time + 10f;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"verify failed: {e.Message}");
+            }
+        }
+
+        var keyboard = UnityEngine.InputSystem.Keyboard.current;
+        if (keyboard == null)
+        {
+            return;
+        }
+
+        // The game itself binds bare function keys (F8 opens a folder), so probe
+        // hotkeys require Ctrl+Alt to stay out of its way.
+        var ctrlAlt = keyboard[UnityEngine.InputSystem.Key.LeftCtrl].isPressed
+                      && keyboard[UnityEngine.InputSystem.Key.LeftAlt].isPressed;
+        if (!ctrlAlt)
+        {
+            return;
+        }
+
+        if (keyboard[UnityEngine.InputSystem.Key.F9].wasPressedThisFrame)
+        {
+            Diagnose("F9");
+        }
+        else if (keyboard[UnityEngine.InputSystem.Key.F10].wasPressedThisFrame)
+        {
+            TryStartRun();
+        }
+        else if (keyboard[UnityEngine.InputSystem.Key.F7].wasPressedThisFrame)
+        {
+            Capture();
+        }
+        else if (keyboard[UnityEngine.InputSystem.Key.F8].wasPressedThisFrame)
+        {
+            VersusPlugin.Log.LogWarning("F8 injection disabled: local multiplayer session setup is not yet validated");
+        }
+        else if (keyboard[UnityEngine.InputSystem.Key.F6].wasPressedThisFrame)
+        {
+            ProbeCommands();
+        }
+    }
+
+    private static void TrackScene()
+    {
+        try
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            if (scene != _lastScene)
+            {
+                _lastScene = scene;
+                var hubManager = UnityEngine.Object.FindObjectOfType<MultiplayerSystems.MultiplayerManager>();
+                VersusPlugin.Log.LogInfo($"scene changed: {scene} multiplayerManager={(hubManager == null ? "absent" : "present")}");
+            }
+        }
+        catch
+        {
+            // SceneManager can be unavailable during teardown; ignore.
+        }
+    }
+
+    private static void Diagnose(string source)
+    {
+        try
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            VersusPlugin.Log.LogInfo($"[{source}] scene={scene}");
+
+            var console = UnityEngine.Object.FindObjectOfType<Console.GameConsole>();
+            VersusPlugin.Log.LogInfo($"[{source}] GameConsole={(console == null ? "none" : "present")}");
+
+            var difficulties = Resources.FindObjectsOfTypeAll<Difficulty.DifficultyLevelSO>();
+            VersusPlugin.Log.LogInfo($"[{source}] difficulty assets={difficulties?.Length ?? 0}");
+            if (difficulties != null)
+            {
+                for (var i = 0; i < difficulties.Length && i < 12; i++)
+                {
+                    var d = difficulties[i];
+                    string localized;
+                    try { localized = d?.GetLocalizedName(); }
+                    catch { localized = "?"; }
+                    VersusPlugin.Log.LogInfo($"[{source}]   difficulty[{i}] asset='{d?.name}' name='{d?.Name}' localized='{localized}'");
+                }
+            }
+
+            var manager = UnityEngine.Object.FindObjectOfType<Gameplay.GameplayManager>();
+            VersusPlugin.Log.LogInfo($"[{source}] GameplayManager={(manager == null ? "none" : "present")}");
+            VersusPlugin.Log.LogInfo($"[{source}] Wave.Instance={(Core.Wave.Instance == null ? "none" : "present")}");
+            VersusPlugin.Log.LogInfo($"[{source}] Wave.multiplayerEnemySnapshot={(Core.Wave.CurrentMultiplayerEnemySnapshot == null ? "null" : "set")}");
+            VersusPlugin.Log.LogInfo($"[{source}] cached snapshot={(_cached == null ? "null" : "set")}");
+
+            ReportConsoleState();
+            LogMultiplayerState(source);
+
+            if (Core.Wave.Instance == null)
+            {
+                VersusPlugin.Log.LogInfo($"[{source}] no Wave instance, skipping snapshot capture");
+                return;
+            }
+
+            var snapshot = Gameplay.GameSnapshot.CaptureSnapshot();
+            SnapshotDump.Write(snapshot, source);
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"[{source}] diagnose failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static void LogMultiplayerState(string source)
+    {
+        try
+        {
+            var wave = Core.Wave.Instance;
+            if (wave == null)
+            {
+                VersusPlugin.Log.LogInfo($"[{source}] state: no Wave instance");
+                return;
+            }
+
+            var map = Core.Wave.MultiplayerMap;
+            VersusPlugin.Log.LogInfo(
+                $"[{source}] state: enemyBase={(Core.Wave.MultiplayerEnemyBase == null ? "null" : "set")} " +
+                $"map={(map == null ? "null" : map.activeSelf ? "active" : "inactive")} " +
+                $"enemyWalls={(Core.Wave.MultiplayerEnemyWallsRepresentation == null ? "null" : "set")} " +
+                $"previewWalls={(Core.Wave.MultiplayerPreviewWallsRepresentation == null ? "null" : "set")} " +
+                $"lifeVisual={(Core.Wave.MultiplayerEnemyLifeVisual == null ? "null" : "set")}");
+
+            var waveType = Core.Wave.GetCurrentWaveType();
+            VersusPlugin.Log.LogInfo($"[{source}] state: waveType={waveType} enemySnapshot={(Core.Wave.CurrentMultiplayerEnemySnapshot == null ? "null" : "set")} runIsMultiplayer={(Core.Wave.Data == null ? "no-data" : Core.Wave.Data.IsMultiplayer.ToString())}");
+
+            try
+            {
+                var playerTroops = Core.Kingdoms.KingdomAreaManager.GetAreasWithTroops(false);
+                var enemyTroops = Core.Kingdoms.KingdomAreaManager.GetAreasWithTroops(true);
+                var enemyBuildings = Core.Kingdoms.KingdomAreaManager.GetAreasWithBuildings(true, true);
+                var enemyAnything = Core.Kingdoms.KingdomAreaManager.GetAreasWithAnythingPlaced(true);
+                VersusPlugin.Log.LogInfo(
+                    $"[{source}] areas: playerTroops={playerTroops?.Count ?? -1} enemyTroops={enemyTroops?.Count ?? -1} " +
+                    $"enemyBuildings={enemyBuildings?.Count ?? -1} enemyAnything={enemyAnything?.Count ?? -1}");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"[{source}] area counts failed: {e.GetType().Name}: {e.Message}");
+            }
+
+            try
+            {
+                var playerBase = Core.Wave.PlayerBase;
+                var enemyBase = Core.Wave.MultiplayerEnemyBase;
+                var cam = UnityEngine.Camera.main;
+                VersusPlugin.Log.LogInfo(
+                    $"[{source}] positions: player={(playerBase == null ? "null" : playerBase.transform.position.ToString())} " +
+                    $"enemy={(enemyBase == null ? "null" : enemyBase.transform.position.ToString())} " +
+                    $"camera={(cam == null ? "null" : cam.transform.position.ToString())}");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"[{source}] positions failed: {e.GetType().Name}: {e.Message}");
+            }
+
+            var manager = UnityEngine.Object.FindObjectOfType<Gameplay.GameplayMultiplayerManager>();
+            VersusPlugin.Log.LogInfo($"[{source}] state: GameplayMultiplayerManager={(manager == null ? "none" : "present")}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"[{source}] state probe failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static void ReportConsoleState()
+    {
+        try
+        {
+            var type = typeof(Console.GameConsole);
+            var onScreen = type.GetProperty("OnScreen", BindingFlags.Public | BindingFlags.Static);
+            VersusPlugin.Log.LogInfo($"console.OnScreen={(onScreen == null ? "n/a" : onScreen.GetValue(null)?.ToString())}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"console state failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static void TryStartRun()
+    {
+        try
+        {
+            var selected = Difficulty.DifficultySO.Instance?.GetSelectedDifficulty();
+            VersusPlugin.Log.LogInfo($"F10: selected difficulty asset='{selected?.name}' name='{selected?.Name}'");
+
+            var difficulties = Resources.FindObjectsOfTypeAll<Difficulty.DifficultyLevelSO>();
+            var difficulty = selected ?? (difficulties != null && difficulties.Length > 0 ? difficulties[0] : null);
+            if (difficulty == null)
+            {
+                VersusPlugin.Log.LogWarning("F10: no DifficultyLevelSO assets found");
+                return;
+            }
+
+            var key = string.IsNullOrEmpty(difficulty.Name) ? difficulty.name : difficulty.Name;
+            VersusPlugin.Log.LogInfo($"F10: trying StartNewGame with difficulty key '{key}' (asset '{difficulty.name}')");
+
+            var kings = new Il2CppSystem.Collections.Generic.List<Core.CardOwnership>();
+            Gameplay.GameplayManager.StartNewGame(key, Core.CardOwnership.KingOfNothing, kings);
+            VersusPlugin.Log.LogInfo("F10: StartNewGame returned");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogError($"F10: {e}");
+        }
+    }
+
+    private static void ProbeCommands()
+    {
+        try
+        {
+            var result = Console.GameConsoleCommandRegistry.CreateCommands();
+            var commands = result?.Commands;
+            VersusPlugin.Log.LogInfo($"F6: commands={commands?.Count ?? 0} warnings={result?.Warnings?.Count ?? 0}");
+
+            if (commands != null)
+            {
+                for (var i = 0; i < commands.Count; i++)
+                {
+                    var c = commands[i];
+                    VersusPlugin.Log.LogInfo($"F6:   {c.GetName()} <- {c.GetType().Name}");
+                }
+            }
+
+            if (result?.Warnings != null)
+            {
+                for (var i = 0; i < result.Warnings.Count; i++)
+                {
+                    VersusPlugin.Log.LogWarning($"F6: warning {result.Warnings[i]}");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogError($"F6: {e}");
+        }
+    }
+
+    private static void Capture()
+    {
+        try
+        {
+            if (Core.Wave.Instance == null)
+            {
+                VersusPlugin.Log.LogWarning("F7: no Wave instance (not in a run)");
+                return;
+            }
+
+            _cached = Gameplay.GameSnapshot.CaptureSnapshot();
+            if (_cached == null)
+            {
+                VersusPlugin.Log.LogWarning("F7: CaptureSnapshot returned null");
+                return;
+            }
+
+            SnapshotDump.Write(_cached, "f7-capture");
+            VersusPlugin.Log.LogInfo($"F7: cached snapshot wave={SafeWave(_cached)}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogError($"F7: {e}");
+        }
+    }
+
+    private static void Inject()
+    {
+        try
+        {
+            if (_cached == null)
+            {
+                VersusPlugin.Log.LogWarning("F8: nothing cached, press F7 first");
+                return;
+            }
+
+            var prop = typeof(Core.Wave).GetProperty(
+                "CurrentMultiplayerEnemySnapshot",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+            if (prop == null || !prop.CanWrite)
+            {
+                VersusPlugin.Log.LogWarning($"F8: CurrentMultiplayerEnemySnapshot not writable (prop={(prop == null ? "missing" : "read-only")})");
+            }
+            else
+            {
+                prop.SetValue(null, _cached);
+                VersusPlugin.Log.LogInfo($"F8: injected cached snapshot wave={SafeWave(_cached)}");
+            }
+
+            ShowEnemyBoard();
+            LogMultiplayerState("F8");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogError($"F8: {e}");
+        }
+    }
+
+    private static void ShowEnemyBoard()
+    {
+        try
+        {
+            var map = Core.Wave.MultiplayerMap;
+            if (map != null && !map.activeSelf)
+            {
+                map.SetActive(true);
+                VersusPlugin.Log.LogInfo("F8: MultiplayerMap activated");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"F8: activating MultiplayerMap failed: {e.GetType().Name}: {e.Message}");
+        }
+
+        try
+        {
+            var enemyBase = Core.Wave.MultiplayerEnemyBase;
+            if (enemyBase != null && !enemyBase.gameObject.activeSelf)
+            {
+                enemyBase.gameObject.SetActive(true);
+                VersusPlugin.Log.LogInfo("F8: MultiplayerEnemyBase activated");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"F8: activating MultiplayerEnemyBase failed: {e.GetType().Name}: {e.Message}");
+        }
+
+        InvokeRefreshMap();
+        TryEnterEnemyMapView();
+    }
+
+    private static void TryEnterEnemyMapView()
+    {
+        try
+        {
+            var manager = UnityEngine.Object.FindObjectOfType<Gameplay.GameplayMultiplayerManager>();
+            if (manager == null)
+            {
+                VersusPlugin.Log.LogInfo("F8: no GameplayMultiplayerManager in scene");
+                return;
+            }
+
+            var run = new MultiplayerSystems.MultiplayerRunData
+            {
+                playerId = 1,
+                kingId = (int)Core.CardOwnership.KingOfSpells,
+                gameVersion = _cached?.Version ?? "local",
+                snapshot = new MultiplayerSystems.MultiplayerGameSnapshots(),
+            };
+            run.snapshot.Add(_cached);
+
+            Core.Entities.KingSo king = null;
+            var tryGet = typeof(Gameplay.GameplayMultiplayerManager).GetMethod(
+                "TryGetKing", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (tryGet != null)
+            {
+                var args = new object[] { run.kingId, null };
+                var found = (bool)tryGet.Invoke(null, args);
+                king = args[1] as Core.Entities.KingSo;
+                VersusPlugin.Log.LogInfo($"F8: TryGetKing({run.kingId})={found} king={(king == null ? "null" : king.name)}");
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("F8: TryGetKing not found");
+            }
+
+            var toggle = typeof(Gameplay.GameplayMultiplayerManager).GetMethod(
+                "ToggleEnemyMapPreview", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (toggle != null)
+            {
+                try
+                {
+                    toggle.Invoke(manager, new object[] { run });
+                    VersusPlugin.Log.LogInfo("F8: ToggleEnemyMapPreview invoked");
+                    return;
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"F8: ToggleEnemyMapPreview failed: {e.GetType().Name}: {e.InnerException?.Message ?? e.Message}");
+                }
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("F8: ToggleEnemyMapPreview not found");
+            }
+
+            VersusPlugin.Log.LogInfo("F8: trying EnterEnemyMapView");
+
+            var enter = typeof(Gameplay.GameplayMultiplayerManager).GetMethod(
+                "EnterEnemyMapView", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (enter == null)
+            {
+                VersusPlugin.Log.LogWarning("F8: EnterEnemyMapView not found");
+                return;
+            }
+
+            enter.Invoke(manager, new object[] { run, king, _cached });
+            VersusPlugin.Log.LogInfo("F8: EnterEnemyMapView invoked");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"F8: enemy map view failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static void InvokeRefreshMap()
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+
+        System.Reflection.MethodInfo method = null;
+        foreach (var candidate in typeof(Core.Wave).GetMethods(flags))
+        {
+            if (candidate.Name.Contains("RefreshMultiplayer"))
+            {
+                VersusPlugin.Log.LogInfo($"F8: found {candidate.Name} static={candidate.IsStatic} params={candidate.GetParameters().Length}");
+                if (method == null && candidate.IsStatic)
+                {
+                    method = candidate;
+                }
+            }
+        }
+
+        if (method != null)
+        {
+            try
+            {
+                method.Invoke(null, method.GetParameters().Length == 0 ? null : new object[method.GetParameters().Length]);
+                VersusPlugin.Log.LogInfo($"RefreshMultiplayerMap invoked ({method.Name})");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"RefreshMultiplayerMap failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+        else
+        {
+            VersusPlugin.Log.LogWarning("RefreshMultiplayerMap not found");
+        }
+
+        // Gauntlet preparation requires a validated local session; never run it from this probe.
+    }
+
+    public static bool RunCommand(string input)
+    {
+        try
+        {
+            var console = UnityEngine.Object.FindObjectOfType<Console.GameConsole>();
+            var commands = Console.GameConsoleCommandRegistry.CreateCommands()?.Commands;
+            if (commands == null || input == null)
+            {
+                VersusPlugin.Log.LogWarning($"command '{input}': no command registry");
+                return false;
+            }
+
+            var token = input.Split(' ')[0];
+            Console.Command match = null;
+            for (var i = 0; i < commands.Count; i++)
+            {
+                var name = commands[i]?.GetName();
+                if (name == token || (name != null && name.StartsWith(token + " ")))
+                {
+                    match = commands[i];
+                    break;
+                }
+            }
+
+            if (match == null)
+            {
+                VersusPlugin.Log.LogWarning($"command '{input}': not found");
+                return false;
+            }
+
+            var executed = match.Execute(input, console);
+            VersusPlugin.Log.LogInfo($"command '{input}' executed={executed}");
+            return executed;
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"command '{input}' failed: {e.GetType().Name}: {e.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Presses the game's own Start Battle button (clearing the hand first so the
+    /// <=2-card gate is satisfied) and schedules the second press that actually
+    /// begins combat.
+    /// </summary>
+    private static void BeginVersusBattle(string reason)
+    {
+        if (_resultHandled)
+        {
+            return;
+        }
+
+        try
+        {
+            var data = Core.Wave.Data;
+            var hand = GameplayInterface.GameplayUI.HandCards;
+            var view = UnityEngine.Object.FindObjectOfType<Core.GameplayUI_PlacingView>();
+            VersusPlugin.Log.LogInfo($"{reason}: view={(view == null ? "null" : "found")} " +
+                $"startState={view?.GetStartState().ToString() ?? "n/a"} wave={data?.Wave} cards={hand?.CardsCount.ToString() ?? "n/a"} " +
+                $"running={data?.Running} combatOn={data?.CombatOn} waitingToBegin={data?.WaitingToBegin}");
+
+            if (hand != null && hand.CardsCount > 0)
+            {
+                hand.Clear();
+            }
+
+            if (view == null)
+            {
+                VersusPlugin.Log.LogWarning($"{reason}: no placing view found");
+                return;
+            }
+
+            var method = typeof(Core.GameplayUI_PlacingView).GetMethod("StartBattle",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            method?.Invoke(view, null);
+            VersusPlugin.Log.LogInfo($"{reason}: StartBattle invoked (method={method != null}); " +
+                $"running={data?.Running} combatOn={data?.CombatOn} waitingToBegin={data?.WaitingToBegin} cards={hand?.CardsCount.ToString() ?? "n/a"}");
+            _secondBattleAt = Time.time + 8f;
+            ScheduleVerification(10);
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"{reason} failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    /// <summary>
+    /// Host is the start authority: both peers announce readiness for the current
+    /// wave, then the host sends go and both press Start Battle.
+    /// </summary>
+    private static void AutoVersusStep(int wave)
+    {
+        if (_resultHandled)
+        {
+            return;
+        }
+
+        var data = Core.Wave.Data;
+        if (data == null || data.Running || data.CombatOn)
+        {
+            return;
+        }
+
+        if (_handshakeWave != wave)
+        {
+            _handshakeWave = wave;
+            _readySent = false;
+            _goSent = false;
+            _autoStarted = false;
+            VersusPlugin.Log.LogInfo($"auto-versus: new wave {wave}, mode={VersusNet.Mode}, peerReady={VersusNet.PeerReadyWave}");
+        }
+
+        if (!_readySent)
+        {
+            _readySent = true;
+            VersusNet.SendReady(wave);
+        }
+
+        if (VersusNet.PeerReadyWave != wave || VersusNet.StateVersion < 1)
+        {
+            return;
+        }
+
+        if (VersusNet.Mode == "host" && !_goSent)
+        {
+            _goSent = true;
+            VersusNet.SendGo(wave);
+        }
+
+        var shouldStart = VersusNet.Mode == "host"
+            ? _goSent
+            : VersusNet.GoWave == wave && VersusNet.StateVersion > 0;
+
+        if (shouldStart && !_autoStarted)
+        {
+            _autoStarted = true;
+            BeginVersusBattle("auto-versus");
+        }
+    }
+
+    /// <summary>
+    /// Host-authoritative match result: the first life-count difference decides
+    /// the match (the peer with fewer lives loses). The result is sent to both
+    /// peers so they cannot declare separate victories.
+    /// </summary>
+    private static void MatchResultStep()
+    {
+        try
+        {
+            var myLives = VersusNet.LocalLives;
+            var peerLives = VersusNet.PeerLives;
+
+            if (VersusNet.Mode == "host")
+            {
+                if (!_resultHandled && myLives >= 0 && peerLives >= 0 && myLives != peerLives)
+                {
+                    var loser = myLives < peerLives ? 0 : 1;
+                    _resultHandled = true;
+                    VersusPlugin.Log.LogInfo(
+                        $"match-result: host decision hostLives={myLives} joinLives={peerLives} loser={(loser == 0 ? "host" : "join")}");
+                    VersusNet.SendResult(loser);
+                    ApplyMatchResult(loser);
+                }
+            }
+            else if (VersusNet.ResultLoser >= 0 && !_resultHandled)
+            {
+                ApplyMatchResult(VersusNet.ResultLoser);
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"match-result failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static void ApplyMatchResult(int loser)
+    {
+        _resultHandled = true;
+        var iAmLoser = (VersusNet.Mode == "host" && loser == 0) || (VersusNet.Mode == "join" && loser == 1);
+        VersusPlugin.Log.LogInfo($"match-result: applying {(iAmLoser ? "defeat" : "victory")} on {VersusNet.Mode}");
+        if (iAmLoser)
+        {
+            RunCommand("SetLife 0");
+        }
+        else
+        {
+            RunCommand("SetLife 1");
+        }
+    }
+
+
+    /// <summary>
+    /// Called by the StartWave prefix. In an auto-versus match only the first
+    /// StartWave for a wave is allowed (the game otherwise re-issues rewards and
+    /// floods the hand); after a match result no further waves may start.
+    /// </summary>
+    public static bool ClaimStartWave()
+    {
+        if (!System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")))
+        {
+            return true;
+        }
+
+        if (_resultHandled)
+        {
+            VersusPlugin.Log.LogWarning("StartWave blocked: match result already decided");
+            return false;
+        }
+
+        return true;
+    }
+
+    public static void ScheduleVerification(int samples = 6)
+    {
+        _verifyAt = Time.time + 8f;
+        _verifySamples = samples;
+    }
+
+    private static void AdvanceWave()
+    {
+        try
+        {
+            var target = (Core.Wave.Data?.Wave ?? 15) + 1;
+            VersusPlugin.Log.LogInfo($"advance: SetWave({target}, skipShop=true, showUIs=false)");
+            Core.Wave.SetWave(target, true, false, false);
+            VersusPlugin.Log.LogInfo("advance: SetWave invoked (awaitable started)");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"advance failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static int SafeWave(Gameplay.GameSnapshot snapshot)
+    {
+        try
+        {
+            return snapshot.WaveData?.WaveNumber ?? -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+}

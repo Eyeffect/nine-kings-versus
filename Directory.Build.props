@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Set NINEKINGS_DIR to your game folder, or pass -p:GameDir=... -->
+    <GameDir Condition="'$(GameDir)' == '' and '$(NINEKINGS_DIR)' != ''">$(NINEKINGS_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">$(MSBuildThisFileDirectory)..\coop-anything\local\testgame</GameDir>
+  </PropertyGroup>
+</Project>
