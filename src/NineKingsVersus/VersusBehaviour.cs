@@ -87,6 +87,43 @@ public sealed class VersusBehaviour : MonoBehaviour
             TroopCatalog.Dump();
         }
 
+        var skipIntro = System.IO.Path.Combine(VersusPlugin.DataDir, "skip-intro");
+        if (System.IO.File.Exists(skipIntro))
+        {
+            var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            if (active == "SplashScreen" || active == "IntroductionVideo")
+            {
+                UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+            }
+        }
+
+        var refreshMap = System.IO.Path.Combine(VersusPlugin.DataDir, "refresh-map");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(refreshMap))
+        {
+            System.IO.File.Delete(refreshMap);
+            try
+            {
+                var map = Core.Wave.MultiplayerMap;
+                if (map != null && !map.activeSelf)
+                {
+                    map.SetActive(true);
+                    VersusPlugin.Log.LogInfo("refresh-map: MultiplayerMap activated");
+                }
+
+                var opponent = LocalSessionProbe.GetOpponentSnapshot();
+                if (opponent != null)
+                {
+                    Core.Wave.CurrentMultiplayerEnemySnapshot = opponent;
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"refresh-map setup failed: {e.Message}");
+            }
+
+            InvokeRefreshMap();
+        }
+
         var dumpMenu = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-menu");
         if (_lastScene == "MainMenu" && System.IO.File.Exists(dumpMenu))
         {

@@ -143,6 +143,21 @@ Two-process run: both sides spawned opponent-deck armies (8 multiplayer enemies 
 
 Life loss is the game's own combat outcome for a breached base, so this is a real combat-derived result rather than a static comparison. Army-elimination detection remains available but did not trigger because neither army reached zero before the life was lost.
 
+## Opponent base rendering (decompiled, not solved)
+
+`Wave.RefreshMultiplayerMap` (0x180627AA0) starts an async state machine (`Wave.<RefreshMultiplayerMap>d__232.MoveNext`, 0x180646630). The state machine:
+- waits for despawn particles to finish,
+- calls `MultiplayerManager.Session.GetDataByPlayerKing(king.Owner)`,
+- calls that run's `snapshot.GetWaveSnapshot(wave, true)` and `wave+1`,
+- calls the local helpers `LoadAreas`, `SetAreaCard`, `SetAreaStats`, `SetTroopQuantity`,
+- uses `GetWallsRepresentation(true)` (the enemy wall representation at `GameplayData + 0x70`).
+
+`GameplayUI_PlacingView.ApplyMultiplayerPreviewSnapshot` is only the preview UI, not the in-battle base.
+
+We added a `refresh-map` flag that activates `Wave.MultiplayerMap`, sets `CurrentMultiplayerEnemySnapshot`, and invokes `RefreshMultiplayerMap`. In testing the map became active but enemy-side areas stayed empty — likely because the session's run king does not match the current wave king, or because the state machine needs additional frames/state. Base rendering remains unresolved.
+
+Also added a `skip-intro` flag that jumps SplashScreen/IntroductionVideo straight to MainMenu, cutting test startup time.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
