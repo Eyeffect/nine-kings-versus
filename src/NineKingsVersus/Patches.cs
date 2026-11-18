@@ -197,6 +197,11 @@ internal static class Patches
             try
             {
                 LocalSessionProbe.EnsureEnemySnapshot("SpawnWave");
+                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "custom-deck")))
+                {
+                    OpponentDeck.Install(LocalSessionProbe.GetOpponentSnapshot());
+                }
+
                 if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")))
                 {
                     // Official flow: keep the game's own WaveTroops and enemy spawning.
