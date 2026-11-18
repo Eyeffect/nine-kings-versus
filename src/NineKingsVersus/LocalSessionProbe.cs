@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 using MultiplayerSystems;
@@ -539,6 +540,149 @@ internal static class LocalSessionProbe
         catch (Exception e)
         {
             VersusPlugin.Log.LogError($"start-mp failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    private static readonly System.Collections.Generic.List<object> NativeMenuDelegates = new System.Collections.Generic.List<object>();
+
+    /// <summary>
+    /// Repurposes the game's native PauseMenu prefab into a versus control panel.
+    /// Same buttons, sprites, font and input handling as the real game.
+    /// </summary>
+    public static void ShowNativeVersusMenu()
+    {
+        try
+        {
+            var pause = GameplayInterface.GameplayUI.PauseMenu;
+            if (pause == null)
+            {
+                VersusPlugin.Log.LogWarning("native-versus: PauseMenu missing");
+                return;
+            }
+
+            var buttons = pause.gameObject.GetComponentsInChildren<UnityEngine.UI.Button>(true);
+            if (buttons == null)
+            {
+                VersusPlugin.Log.LogWarning("native-versus: no buttons");
+                return;
+            }
+
+            NativeMenuDelegates.Clear();
+            var labels = new System.Collections.Generic.Dictionary<string, string>
+            {
+                { "ResumeBtn", "CLOSE" },
+                { "PerksBtn", "HOST" },
+                { "CompendiumBtn", "JOIN" },
+                { "OptionsBtn", "START BATTLE" },
+                { "ForfeitBtn", "REBUILD BOARD" },
+            };
+
+            var actions = new System.Collections.Generic.Dictionary<string, System.Action>
+            {
+                { "ResumeBtn", () => GameplayInterface.GameplayUI.ShowNextUI(0.3f) },
+                { "PerksBtn", () => SetNetMode("host") },
+                { "CompendiumBtn", () => SetNetMode("join") },
+                { "OptionsBtn", () => VersusPlugin.Log.LogInfo($"native-versus: {VersusBehaviour.MenuStartBattle()}") },
+                { "ForfeitBtn", () => VersusPlugin.Log.LogInfo($"native-versus: {VersusBehaviour.MenuBuildBoard()}") },
+            };
+
+            var changed = 0;
+            foreach (var button in buttons)
+            {
+                if (button == null || !labels.TryGetValue(button.name, out var label))
+                {
+                    continue;
+                }
+
+                var text = button.GetComponentInChildren<TMPro.TMP_Text>(true);
+                if (text != null)
+                {
+                    text.text = label;
+                }
+
+                button.onClick.RemoveAllListeners();
+                var action = actions[button.name];
+                var listener = DelegateSupport.ConvertDelegate<UnityEngine.Events.UnityAction>(new System.Action(() => action()));
+                NativeMenuDelegates.Add(listener);
+                button.onClick.AddListener(listener);
+                changed++;
+            }
+
+            GameplayInterface.GameplayUI.ShowSingleUI(pause);
+            VersusPlugin.Log.LogInfo($"native-versus: repurposed {changed} native buttons and showed PauseMenu");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"native-versus failed: {e.Message}");
+        }
+    }
+
+    private static void SetNetMode(string mode)
+    {
+        var path = Path.Combine(VersusPlugin.DataDir, "net.json");
+        var peer = "127.0.0.1";
+        var port = 28764;
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+                var root = doc.RootElement;
+                if (root.TryGetProperty("peer", out var peerProp))
+                {
+                    peer = peerProp.GetString() ?? peer;
+                }
+
+                if (root.TryGetProperty("port", out var portProp))
+                {
+                    port = portProp.GetInt32();
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        File.WriteAllText(path, $"{{\"mode\":\"{mode}\",\"peer\":\"{peer}\",\"port\":{port}}}");
+        VersusPlugin.Log.LogInfo($"native-versus: net mode set to {mode}");
+    }
+
+    /// <summary>
+    /// Logs the native PauseMenu buttons so they can be repurposed for versus.
+    /// </summary>
+    public static void ProbePauseMenu()
+    {
+        try
+        {
+            var pause = GameplayInterface.GameplayUI.PauseMenu;
+            if (pause == null)
+            {
+                VersusPlugin.Log.LogWarning("pausemenu: missing");
+                return;
+            }
+
+            var buttons = pause.gameObject.GetComponentsInChildren<UnityEngine.UI.Button>(true);
+            VersusPlugin.Log.LogInfo($"pausemenu: buttons={buttons?.Length ?? 0}");
+            if (buttons == null)
+            {
+                return;
+            }
+
+            foreach (var button in buttons)
+            {
+                if (button == null)
+                {
+                    continue;
+                }
+
+                var text = button.GetComponentInChildren<TMPro.TMP_Text>(true);
+                VersusPlugin.Log.LogInfo(
+                    $"pausemenu: button '{button.name}' text='{(text == null ? "" : text.text)}'");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"pausemenu probe failed: {e.Message}");
         }
     }
 
