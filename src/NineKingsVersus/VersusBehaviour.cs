@@ -1293,6 +1293,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
 
             if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
+                VersusNet.PeerReadyWave == wave &&
                 !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
             {
                 var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
@@ -1317,7 +1318,8 @@ public sealed class VersusBehaviour : MonoBehaviour
 
             if (VersusNet.Mode == "host")
             {
-                if (!_resultHandled && myLives >= 0 && peerLives >= 0 && myLives != peerLives)
+                if (!_resultHandled && VersusNet.PeerReadyWave == wave &&
+                    myLives >= 0 && peerLives >= 0 && myLives != peerLives)
                 {
                     var loser = myLives < peerLives ? 0 : 1;
                     _resultHandled = true;
