@@ -229,7 +229,7 @@ public sealed class VersusBehaviour : MonoBehaviour
                     $"diag: wave={data?.Wave} running={data?.Running} combatOn={data?.CombatOn} " +
                     $"waitingToBegin={data?.WaitingToBegin} waitingForEnemies={data?.waitingForEnemiesToSpawn} " +
                     $"entities={entities?.Length ?? 0} players={players} enemies={enemies} multiplayer={multiplayer} " +
-                    $"arenaSpawned={CleanArena.LastSpawned} arenaWave={CleanArena.LastWave} " +
+                    $"arenaSpawned={OpponentDeck.LastBattlers} arenaWave={OpponentDeck.LastWave} " +
                     $"lives={VersusNet.LocalLives}/{VersusNet.PeerLives} states={VersusNet.StateVersion} " +
                     $"resultHandled={_resultHandled} eliminatedWave={_localEliminatedWave} " +
                     $"waveEnemies={Core.Wave.Enemies?.Count.ToString() ?? "null"} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
@@ -1271,8 +1271,8 @@ public sealed class VersusBehaviour : MonoBehaviour
                 }
             }
 
-            if (!_resultHandled && wave > 0 && CleanArena.LastWave == wave &&
-                CleanArena.LastSpawned > 0 && liveEnemies <= 3 &&
+            if (!_resultHandled && wave > 0 && OpponentDeck.LastWave == wave &&
+                OpponentDeck.LastBattlers > 0 && liveEnemies <= 3 &&
                 (Core.Wave.Data?.CombatOn ?? false) &&
                 _localEliminatedWave != wave)
             {
@@ -1290,7 +1290,7 @@ public sealed class VersusBehaviour : MonoBehaviour
                 VersusNet.SendEliminated(wave);
             }
 
-            if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
+            if (false && VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
                 VersusNet.PeerEliminatedWave == wave)
             {
                 _resultHandled = true;
@@ -1300,7 +1300,7 @@ public sealed class VersusBehaviour : MonoBehaviour
                 return;
             }
 
-            if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
+            if (false && VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
                 VersusNet.PeerReadyWave == wave &&
                 !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
             {

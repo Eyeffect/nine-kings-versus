@@ -17,6 +17,9 @@ internal static class OpponentDeck
     private static System.Reflection.MethodInfo _createRuntimeCopy;
     private static object _installedDeck; // keep alive
 
+    public static int LastWave { get; private set; } = -1;
+    public static int LastBattlers { get; private set; }
+
     public static void Install(Gameplay.GameSnapshot snapshot)
     {
         try
@@ -118,6 +121,8 @@ internal static class OpponentDeck
             }
 
             _installedDeck = deck;
+            LastWave = Core.Wave.Data?.Wave ?? -1;
+            LastBattlers = deck.GetBattlers()?.Length ?? 0;
 
             var king = Core.Wave.WaveKing;
             var scriptable = king?.Scriptable;

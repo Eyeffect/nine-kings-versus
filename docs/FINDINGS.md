@@ -135,6 +135,14 @@ This is the first end-to-end two-process run where each side fights an army buil
 
 Caveats: winner is still chosen by kingdom strength rather than combat outcome; after the end screen the battle is frozen (45 enemies remain alive), which is expected once a result is applied.
 
+## Combat-derived result
+
+Disabled the kingdom-strength shortcut so the winner comes from the fight. Elimination detection now keys off `OpponentDeck.LastWave/LastBattlers` instead of the old arena spawner.
+
+Two-process run: both sides spawned opponent-deck armies (8 multiplayer enemies on host, 18 on join), combat reduced the host's army to 8 while its player units fell from 137 to 86. The host lost a life, and the existing life-divergence authority fired: host Defeat, join Victory, both `OnCompleteGame` called.
+
+Life loss is the game's own combat outcome for a breached base, so this is a real combat-derived result rather than a static comparison. Army-elimination detection remains available but did not trigger because neither army reached zero before the life was lost.
+
 ## Clean-arena branch (result)
 
 Created branch `clean-arena` and rebuilt the spawner from first principles:
