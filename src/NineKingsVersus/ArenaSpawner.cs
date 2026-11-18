@@ -88,9 +88,40 @@ internal static class ArenaSpawner
     }
 
     /// <summary>Number of opponent entities spawned for the current wave.</summary>
+    private static System.Collections.Generic.List<Core.Entities.Troop> _spawnedTroops =
+        new System.Collections.Generic.List<Core.Entities.Troop>();
+
     public static int LastSpawned { get; private set; }
 
     public static int LastSpawnWave { get; private set; } = -1;
+
+    private static void ClearSpawned()
+    {
+        try
+        {
+            for (var i = 0; i < _spawnedTroops.Count; i++)
+            {
+                var troop = _spawnedTroops[i];
+                if (troop != null)
+                {
+                    UnityEngine.Object.Destroy(troop.gameObject);
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        _spawnedTroops.Clear();
+        var enemies = Core.Wave.Enemies;
+        enemies?.Clear();
+        var melee = Core.Wave.EnemyMeleeTroops;
+        melee?.Clear();
+        var ranged = Core.Wave.EnemyRangedTroops;
+        ranged?.Clear();
+        var other = Core.Wave.EnemyNotPriorityTroops;
+        other?.Clear();
+    }
 
     /// <summary>
     /// Prevents the local wave generator from spawning its usual bot army, so
@@ -181,6 +212,7 @@ internal static class ArenaSpawner
             }
 
             CaptureEnemyMasks();
+            ClearSpawned();
 
             var despawn = typeof(Core.Wave).GetMethod("DespawnWaveEnemies",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
@@ -313,6 +345,7 @@ internal static class ArenaSpawner
                         }
 
                         ApplyEnemyMasks(troop);
+                        _spawnedTroops.Add(troop);
                         enemiesList.Add(troop);
                         melee.Add(troop);
 
@@ -393,6 +426,7 @@ internal static class ArenaSpawner
                         }
 
                         ApplyEnemyMasks(troop);
+                        _spawnedTroops.Add(troop);
                         enemiesList.Add(troop);
                         melee.Add(troop);
 

@@ -42,6 +42,8 @@ internal static class Patches
     [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.StartWave))]
     internal static class WaveStartPatch
     {
+        private static int _arenaSpawnedWave = -1;
+
         private static bool Prefix()
         {
             try
@@ -80,6 +82,22 @@ internal static class Patches
                     $"enemyBase={(Core.Wave.MultiplayerEnemyBase == null ? "null" : "set")} " +
                     $"enemyTroops={Core.Kingdoms.KingdomAreaManager.GetAreasWithTroops(true)?.Count ?? -1} " +
                     $"enemyAnything={Core.Kingdoms.KingdomAreaManager.GetAreasWithAnythingPlaced(true)?.Count ?? -1}");
+
+                var wave = runData?.Wave ?? -1;
+                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && _arenaSpawnedWave != wave)
+                {
+                    _arenaSpawnedWave = wave;
+                    var opponent = LocalSessionProbe.GetOpponentSnapshot();
+                    if (opponent != null)
+                    {
+                        ArenaSpawner.SpawnOpponentArmy(opponent);
+                    }
+                    else
+                    {
+                        VersusPlugin.Log.LogWarning("arena: no opponent snapshot at wave start");
+                    }
+                }
+
                 VersusBehaviour.ScheduleVerification();
             }
             catch (Exception e)
@@ -174,8 +192,6 @@ internal static class Patches
     [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.SpawnWave))]
     internal static class SpawnWavePatch
     {
-        private static int _arenaSpawnedWave = -1;
-
         private static void Prefix()
         {
             try
@@ -232,20 +248,6 @@ internal static class Patches
                     $"SpawnWave out: entities={entities?.Length ?? 0} enemy={enemy} multiplayerEnemy={multiplayerEnemy} " +
                     $"waveTroops={Core.Wave.WaveTroops?.Length ?? -1} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
 
-                var wave = Core.Wave.Data?.Wave ?? -1;
-                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && _arenaSpawnedWave != wave)
-                {
-                    _arenaSpawnedWave = wave;
-                    var opponent = LocalSessionProbe.GetOpponentSnapshot();
-                    if (opponent != null)
-                    {
-                        ArenaSpawner.SpawnOpponentArmy(opponent);
-                    }
-                    else
-                    {
-                        VersusPlugin.Log.LogWarning("arena: no opponent snapshot available for army");
-                    }
-                }
             }
             catch (Exception e)
             {

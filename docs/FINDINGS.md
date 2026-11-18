@@ -103,3 +103,14 @@ Observed on two synced processes:
 - Troops still do not reliably target each other; they accumulate on the opponent side and the local game's own victory/defeat logic remains independent.
 
 Conclusion: the mod can load runs, exchange snapshots, sync waves, spawn some opponent troops, and draw a native menu, but it cannot yet produce a correct, synchronized 1v1 fight with a single winner. The remaining work needs a proper faction/AI setup and a result hook that replaces the game's local victory logic, which requires deeper engine work than the async-gauntlet reuse path allows.
+
+## Handoff state (stopped testing)
+
+Further iterations still showed the same failures:
+
+- Enemy entities accumulate instead of fighting each other (254/239 enemies in the final diag, with `multiplayer=0`).
+- Lives converged to 1/1, so the life authority could not decide a winner, and army elimination never reached zero.
+- The winner's multiplayer victory UI cannot be entered offline: TryJumpToMultiplayerVictoryWave and the enemy-death screen were invoked but no victory screen appeared. The loser does reach game over via SetLife 0.
+- The troop-count bar shows local wave data, not the custom spawned army, so it is misleading.
+
+Decision: stop iterating on this prototype. The LAN transport, native in-game menu, per-wave snapshot sync, arena army spawner, and diagnostics work as isolated pieces, but the game's faction/AI and victory flow cannot be driven reliably from the async-PvP surface offline. A real live 1v1 needs an engine-level rewrite (custom combat scene and result UI) rather than reusing the shipped gauntlet.

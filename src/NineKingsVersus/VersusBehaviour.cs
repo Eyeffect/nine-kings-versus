@@ -119,7 +119,8 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             _lastNetStateVersion = VersusNet.StateVersion;
             var data = Core.Wave.Data;
-            if (_lastScene == "Gameplay" && data != null && !data.Running)
+            if (_lastScene == "Gameplay" && data != null && !data.Running &&
+                !System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
             {
                 VersusPlugin.Log.LogInfo("net: rebuilding opponent board from peer state");
                 LocalSessionProbe.BuildEnemyBoard();
@@ -1233,6 +1234,7 @@ public sealed class VersusBehaviour : MonoBehaviour
 
             if (!_resultHandled && wave > 0 && ArenaSpawner.LastSpawnWave == wave &&
                 ArenaSpawner.LastSpawned > 0 && liveEnemies <= 3 &&
+                (Core.Wave.Data?.CombatOn ?? false) &&
                 _localEliminatedWave != wave)
             {
                 _localEliminatedWave = wave;
@@ -1294,6 +1296,43 @@ public sealed class VersusBehaviour : MonoBehaviour
         else
         {
             RunCommand("SetLife 1");
+            try
+            {
+                var diplomat = typeof(GameplayInterface.GameplayUI_DiplomatView).GetMethod(
+                    "TryJumpToMultiplayerVictoryWave",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
+                if (diplomat != null)
+                {
+                    diplomat.Invoke(diplomat.IsStatic ? null : UnityEngine.Object.FindObjectOfType<GameplayInterface.GameplayUI_DiplomatView>(), null);
+                    VersusPlugin.Log.LogInfo("match-result: invoked multiplayer victory jump");
+
+                try
+                {
+                    var deathScreen = GameplayInterface.GameplayUI.MultiplayerEnemyDeathScreen;
+                    if (deathScreen != null)
+                    {
+                        deathScreen.Show();
+                        VersusPlugin.Log.LogInfo("match-result: showed multiplayer enemy death screen");
+                    }
+
+                    Core.Wave.Data?.SetRunning(false);
+                    Core.Wave.Instance?.StopSpawningEnemies();
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"match-result: victory UI failed: {e.Message}");
+                }
+                }
+                else
+                {
+                    VersusPlugin.Log.LogWarning("match-result: victory jump method not found");
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"match-result: victory jump failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+            }
         }
     }
 
