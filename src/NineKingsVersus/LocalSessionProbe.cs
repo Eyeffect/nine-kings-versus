@@ -531,8 +531,19 @@ internal static class LocalSessionProbe
                 new Il2CppStringArray(0), new Il2CppStringArray(0),
                 new Il2CppStringArray(0), new Il2CppStringArray(0));
 
+            // Every run except the local player is a gauntlet opponent. The game
+            // rotates through them with RefreshWaveKing each wave; hard-coding one
+            // enemy meant the same king every round.
             var gauntlet = new Il2CppSystem.Collections.Generic.List<MultiplayerRunData>();
-            gauntlet.Add(enemyRun);
+            foreach (var run in allRuns)
+            {
+                if (run.runId != localRun.runId)
+                {
+                    gauntlet.Add(run);
+                }
+            }
+
+            VersusPlugin.Log.LogInfo($"attach-pre: gauntlet populated with {gauntlet.Count} opposing kings");
             typeof(MultiplayerSession).GetProperty("GauntletEnemies",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
                 ?.SetValue(session, gauntlet);

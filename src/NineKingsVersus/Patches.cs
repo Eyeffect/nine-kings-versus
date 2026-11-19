@@ -380,6 +380,17 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.Wave), "RefreshWaveKing")]
+    internal static class RefreshWaveKingPatch
+    {
+        private static void Postfix()
+        {
+            var wave = Core.Wave.Data?.Wave ?? -1;
+            var king = Core.Wave.WaveKing?.Scriptable?.name ?? "null";
+            VersusPlugin.Log.LogInfo($"wave-king: wave={wave} selected={king}");
+        }
+    }
+
     [HarmonyPatch(typeof(GameplayInterface.GameplayUI_UserFace), "Setup")]
     internal static class UserFaceSetupPatch
     {
