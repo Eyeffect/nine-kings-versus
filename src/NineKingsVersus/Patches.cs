@@ -555,18 +555,6 @@ internal static class Patches
         }
     }
 
-    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "OnMenuBtn")]
-    internal static class PauseMenuBtnPatch
-    {
-        private static void Prefix()
-        {
-            if (LocalSessionProbe.Paused)
-            {
-                LocalSessionProbe.TogglePause();
-            }
-        }
-    }
-
     private static UnityEngine.GameObject FindByName(UnityEngine.Transform root, string name)
     {
         if (root == null)
