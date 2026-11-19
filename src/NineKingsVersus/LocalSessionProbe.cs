@@ -1851,6 +1851,30 @@ internal static class LocalSessionProbe
         }
     }
 
+    private static UnityEngine.GameObject FindChildByName(UnityEngine.Transform root, string name)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        if (root.name == name)
+        {
+            return root.gameObject;
+        }
+
+        for (var i = 0; i < root.childCount; i++)
+        {
+            var found = FindChildByName(root.GetChild(i), name);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
     private static void ActivateAll(UnityEngine.Transform t)
     {
         if (t == null)
@@ -2005,6 +2029,30 @@ internal static class LocalSessionProbe
 
     public static void TogglePause()
     {
+        var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+        var menu = all != null && all.Length > 0 ? all[0] : null;
+        var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance;
+
+        // If a sub-panel (Options/Forfeit/Quit) is open, Escape goes back to the
+        // main pause panel instead of closing the whole menu.
+        if (_paused && menu != null)
+        {
+            var subNames = new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure" };
+            foreach (var subName in subNames)
+            {
+                var sub = FindChildByName(menu.transform, subName);
+                if (sub != null && sub.activeSelf)
+                {
+                    sub.SetActive(false);
+                    var mainBack = FindChildByName(menu.transform, "Main");
+                    if (mainBack != null) ActivateAll(mainBack.transform);
+                    VersusPlugin.Log.LogInfo($"escape: backed out of {subName} to main pause");
+                    return;
+                }
+            }
+        }
+
         var opening = !_paused;
         // Only invoke the native Show path when opening. Calling it while resuming
         // re-activated the panel right before we hid it, causing a visible flicker.
@@ -2013,8 +2061,6 @@ internal static class LocalSessionProbe
             TryNativePause();
         }
 
-        var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
-        var menu = all != null && all.Length > 0 ? all[0] : null;
         var stateProp = typeof(Core.GameplayUI_PauseMenu).GetProperty("PauseMenuOnScreen",
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Static);
@@ -2024,8 +2070,6 @@ internal static class LocalSessionProbe
             // Show() throws before activating the button hierarchy. Activate the
             // main panel and its children only - activating every child also brings
             // up the Options/Forfeit/Quit panels layered on top.
-            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance;
             foreach (var panelName in new[] { "m_OptionsPanel", "m_ForfeitPanel", "m_QuitPanel", "m_ReallyQuitPanel" })
             {
                 var field = typeof(Core.GameplayUI_PauseMenu).GetField(panelName, flags);
