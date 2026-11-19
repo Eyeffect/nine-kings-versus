@@ -420,13 +420,21 @@ internal static class LocalSessionProbe
                 ? Core.CardOwnership.KingOfNothing
                 : Core.CardOwnership.KingOfSpells;
 
-            var localProfile = new PlayerProfileData { playerId = 900001, username = "Local probe" };
+            // GameplayUI_UserFace.Setup dereferences run.player.settings. Without it
+            // PopulateEnemyFaces throws and the avatar bar never renders.
+            var localProfile = new PlayerProfileData
+            {
+                playerId = 900001,
+                username = "Local probe",
+                settings = PlayerSettingsData.CreateLocalSnapshot(),
+            };
             var enemyProfile = new PlayerProfileData
             {
                 playerId = 900003,
                 username = "Local probe opponent",
                 completedMissions = new Il2CppSystem.Collections.Generic.List<int>(),
                 unlockedItems = new Il2CppSystem.Collections.Generic.List<int>(),
+                settings = PlayerSettingsData.CreateLocalSnapshot(),
             };
 
             var localSnapshots = new MultiplayerGameSnapshots();
@@ -483,7 +491,17 @@ internal static class LocalSessionProbe
             };
 
             var allRuns = new System.Collections.Generic.List<MultiplayerRunData> { localRun, enemyRun };
-            foreach (Core.CardOwnership king in Enum.GetValues(typeof(Core.CardOwnership)))
+            // Only the nine real kings: PopulateEnemyFaces calls UserFace.Setup on
+            // every session run and fake owners (No_King, All_Kings, Joker...) have
+            // no KingCollectionEntry, which throws and kills the avatar bar.
+            foreach (Core.CardOwnership king in new[]
+            {
+                Core.CardOwnership.KingOfNothing, Core.CardOwnership.KingOfSpells,
+                Core.CardOwnership.KingOfBlood, Core.CardOwnership.KingOfGreed,
+                Core.CardOwnership.KingOfProgress, Core.CardOwnership.KingOfStone,
+                Core.CardOwnership.KingOfNomads, Core.CardOwnership.KingOfNature,
+                Core.CardOwnership.KingOfTime,
+            })
             {
                 if (king == owner || king == opponentKing)
                 {
@@ -609,7 +627,7 @@ internal static class LocalSessionProbe
                 args[1] = difficulty;            // difficulty
                 args[2] = candidate.scene;       // sceneName
                 args[3] = emptyReadOnly;         // customEnemies
-                args[4] = null;                  // seed (Nullable<int>)
+                args[4] = new Il2CppSystem.Nullable<int>(12345); // null NREs in the wrapper
                 args[5] = true;                  // instaLoad
                 args[6] = emptyReadOnly;         // disabledKings
                 args[7] = candidate.multiplayer; // isMultiplayer
@@ -1630,6 +1648,33 @@ internal static class LocalSessionProbe
         }
     }
 
+    public static void ClickMainMenuStart()
+    {
+        try
+        {
+            var start = UnityEngine.GameObject.Find("MainMenuUI/Holder/Main/MainButtonHolder/StartBtn");
+            if (start == null)
+            {
+                VersusPlugin.Log.LogWarning("click-start: StartBtn not found");
+                return;
+            }
+
+            var button = start.GetComponent<UnityEngine.UI.Button>();
+            if (button == null)
+            {
+                VersusPlugin.Log.LogWarning("click-start: Button component missing");
+                return;
+            }
+
+            button.onClick.Invoke();
+            VersusPlugin.Log.LogInfo("click-start: StartBtn onClick invoked");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"click-start failed: {e.Message}");
+        }
+    }
+
     public static void PlayYearShowcase()
     {
         try
@@ -1648,6 +1693,21 @@ internal static class LocalSessionProbe
                 System.Reflection.BindingFlags.Instance);
             method?.Invoke(panel, null);
             VersusPlugin.Log.LogInfo($"showcase: ShowcaseYear invoked panel={panel.name}");
+
+            var enemyShowcase = GameplayInterface.GameplayUI.EnemyShowcase;
+            if (enemyShowcase != null)
+            {
+                var esType = enemyShowcase.GetType();
+                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                            System.Reflection.BindingFlags.Instance;
+                esType.GetMethod("Initialize", flags)?.Invoke(enemyShowcase, null);
+                esType.GetMethod("Show", flags)?.Invoke(enemyShowcase, null);
+                VersusPlugin.Log.LogInfo("showcase: EnemyShowcase Initialize+Show invoked");
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("showcase: EnemyShowcase missing");
+            }
         }
         catch (Exception e)
         {
@@ -1965,13 +2025,21 @@ internal static class LocalSessionProbe
                 ? Core.CardOwnership.KingOfNothing
                 : Core.CardOwnership.KingOfSpells;
 
-            var localProfile = new PlayerProfileData { playerId = 900001, username = "Local probe" };
+            // GameplayUI_UserFace.Setup dereferences run.player.settings. Without it
+            // PopulateEnemyFaces throws and the avatar bar never renders.
+            var localProfile = new PlayerProfileData
+            {
+                playerId = 900001,
+                username = "Local probe",
+                settings = PlayerSettingsData.CreateLocalSnapshot(),
+            };
             var enemyProfile = new PlayerProfileData
             {
                 playerId = 900003,
                 username = "Local probe opponent",
                 completedMissions = new Il2CppSystem.Collections.Generic.List<int>(),
                 unlockedItems = new Il2CppSystem.Collections.Generic.List<int>(),
+                settings = PlayerSettingsData.CreateLocalSnapshot(),
             };
 
             var localSnapshots = new MultiplayerGameSnapshots();

@@ -45,6 +45,7 @@ public sealed class VersusPlugin : BasePlugin
             PatchOne(harmony, typeof(Patches.LoadGamePatch));
             PatchOne(harmony, typeof(Patches.GameplayMpStartPatch));
             PatchOne(harmony, typeof(Patches.PopulateEnemyFacesPatch));
+            PatchOne(harmony, typeof(Patches.UserFaceSetupPatch));
             Log.LogInfo("Harmony patches applied");
         }
         catch (Exception e)

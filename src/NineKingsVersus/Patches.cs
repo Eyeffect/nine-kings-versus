@@ -380,6 +380,26 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(GameplayInterface.GameplayUI_UserFace), "Setup")]
+    internal static class UserFaceSetupPatch
+    {
+        private static void Prefix(MultiplayerSystems.MultiplayerRunData run)
+        {
+            if (run == null)
+            {
+                VersusPlugin.Log.LogWarning("UF-Setup: run is NULL");
+                return;
+            }
+
+            VersusPlugin.Log.LogInfo(
+                $"UF-Setup: run={run.runId} king={run.kingId} hp={run.currentHP} " +
+                $"player={(run.player == null ? "NULL" : "set")} " +
+                $"settings={(run.player?.settings == null ? "NULL" : "set")} " +
+                $"username={(run.player?.username == null ? "NULL" : run.player.username)} " +
+                $"snapshot={(run.snapshot == null ? "NULL" : "set")}");
+        }
+    }
+
     [HarmonyPatch(typeof(GameplayInterface.GameplayUI_MultiplayerScreen), "PopulateEnemyFaces")]
     internal static class PopulateEnemyFacesPatch
     {

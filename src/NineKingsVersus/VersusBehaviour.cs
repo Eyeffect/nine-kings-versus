@@ -123,6 +123,27 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.PlayYearShowcase();
         }
 
+        var clickStart = System.IO.Path.Combine(VersusPlugin.DataDir, "click-start");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(clickStart))
+        {
+            System.IO.File.Delete(clickStart);
+            LocalSessionProbe.ClickMainMenuStart();
+        }
+
+        var probeStartNewGame = System.IO.Path.Combine(VersusPlugin.DataDir, "probe-startnewgame");
+        if (System.IO.File.Exists(probeStartNewGame))
+        {
+            System.IO.File.Delete(probeStartNewGame);
+            LocalSessionProbe.StartMultiplayerRun("Nothing");
+        }
+
+        var forceShowcase = System.IO.Path.Combine(VersusPlugin.DataDir, "showcase");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(forceShowcase))
+        {
+            System.IO.File.Delete(forceShowcase);
+            LocalSessionProbe.PlayYearShowcase();
+        }
+
         var showMpScreen = System.IO.Path.Combine(VersusPlugin.DataDir, "show-mp-screen");
         if (_lastScene == "Gameplay" && System.IO.File.Exists(showMpScreen))
         {
@@ -506,12 +527,14 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             _attachFlowPending = false;
             VersusPlugin.Log.LogInfo("attach-flow: hub active, attaching session and starting multiplayer run");
-            if (LocalSessionProbe.AttachForMultiplayerStart(out _))
+            if (LocalSessionProbe.AttachForMultiplayerStart(out var officialKing))
             {
-                // Wave.StartNewGame(isMultiplayer=true) is unusable offline (NRE), so
-                // the run is loaded from a snapshot. AttachForMultiplayerStart has
-                // already built the session, gauntlet and perk loadout by then.
-                LocalSessionProbe.LoadProbeRun();
+                // Official path: Wave.StartNewGame(isMultiplayer=true). The NRE was a
+                // null Nullable<int> seed; passing a real seed makes it work and the
+                // game initializes all its own UI (avatar bar, splash, enemy base).
+                var shortKing = (officialKing ?? "KingOfNothing").Replace("KingOf", string.Empty);
+                LocalSessionProbe.StartMultiplayerRun(shortKing);
+                LocalSessionProbe.ApplyChosenPerks();
             }
             else
             {
