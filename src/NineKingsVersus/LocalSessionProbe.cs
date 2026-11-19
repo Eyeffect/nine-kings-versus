@@ -450,7 +450,7 @@ internal static class LocalSessionProbe
                 }
 
                 waveSnapshot.WaveData.WaveNumber = wave;
-                waveSnapshot.WaveData.IsMultiplayer = true;
+                waveSnapshot.WaveData.IsMultiplayer = false;
                 localSnapshots.Add(waveSnapshot);
                 enemySnapshots.Add(waveSnapshot);
                 localSnapshots.FinalSnapshot = waveSnapshot;
@@ -1451,7 +1451,11 @@ internal static class LocalSessionProbe
 
         fresh.WaveData.WaveNumber = 0;
         fresh.WaveData.PlayerLifes = 3;
-        fresh.WaveData.IsMultiplayer = true;
+        // Keep the run's own wave logic single-player: IsMultiplayer=true makes the
+        // game expect a server-driven gauntlet and breaks card play, rewards and the
+        // shop in an attached offline session. The opponent is injected separately
+        // via SetMultiplayerCard/SetMultiplayerLife (the path that actually plays).
+        fresh.WaveData.IsMultiplayer = false;
         fresh.WaveData.UnitsKilled = 0;
         fresh.WaveData.UnitsTrained = 0;
         fresh.WaveData.GoldCollected = 0;
@@ -1464,6 +1468,10 @@ internal static class LocalSessionProbe
         foreach (var area in fresh.Areas)
         {
             var isCastle = area.PlacedEntityType == "Castle";
+            // A fresh kingdom has only the standard 3x3 plots unlocked around the
+            // Castle at (-1,1); the wave-15 capture had all 25 unlocked.
+            area.IsUnlocked = area.XCoordinate >= -1 && area.XCoordinate <= 1 &&
+                              area.YCoordinate >= -1 && area.YCoordinate <= 1;
             area.ForceLocked = false;
             area.PlotHoleEnabled = false;
             area.IsTreasureEnabled = false;

@@ -66,12 +66,14 @@ Press **Ctrl+Alt+F11** or click the **VERSUS** button to open the menu.
 - Only loopback two-process tests have been run; a real two-PC LAN test is still
   needed. A two-process test now reaches a shared result with official end screens
   on both copies (`OnCompleteGame` Victory/Defeat). Matches start from a fresh
-  wave-0 board and show the native multiplayer enemy-face screen.
-- The attached session's combat can stall (constant entity counts, no life loss).
-  The host therefore resolves each wave after a 12 s grace period (life count, then
-  snapshot kills, then a stable wave-based tiebreak), broadcasts it, and both peers
-  count down lives and advance to the next wave. The match ends at zero lives with
-  the official end screen. Army-elimination results are not yet achieved.
+  3x3 wave-0 board and show the native multiplayer enemy-face screen. The run uses
+  normal single-player wave logic (cards/shop/rewards work) and injects the
+  opponent board from the peer snapshot; you press the game's own Start Battle
+  button — nothing auto-clears your hand.
+- The host resolves each wave after a 12 s grace period once combat is engaged
+  (life count, then snapshot kills, then a stable wave-based tiebreak) and both
+  peers count down lives. The match ends at zero lives with the official end
+  screen. Army-elimination results are not yet achieved.
 - The two local copies share the same `LocalLow` settings folder, causing
   save-file conflicts; end-screen calls have a retry.
 - The game stops advancing waves at 32, and the alternating tiebreak keeps both

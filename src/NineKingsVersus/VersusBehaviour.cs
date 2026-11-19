@@ -526,9 +526,9 @@ public sealed class VersusBehaviour : MonoBehaviour
             BeginVersusBattle("start-battle");
         }
 
-        // auto-versus: with a connected peer, exchange ready/go and start the same
-        // wave on both machines, then let the second press begin combat. A fresh run
-        // begins at wave 0 (the initial placement year), so include 0.
+        // Auto-starting the battle used to clear the hand the instant a wave began,
+        // so the player could never place a card. Combat is now started by the game's
+        // own Start Battle button; the ready/go state is still exchanged for sync.
         var autoVersus = System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus");
         if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 0
             && System.IO.File.Exists(autoVersus) && VersusNet.Connected)
@@ -1442,7 +1442,9 @@ public sealed class VersusBehaviour : MonoBehaviour
         if (shouldStart && !_autoStarted)
         {
             _autoStarted = true;
-            BeginVersusBattle("auto-versus");
+            // Do not invoke StartBattle: the game's own button must stay usable so
+            // the player can place cards before combat. This only marks readiness.
+            VersusPlugin.Log.LogInfo($"auto-versus: both ready for wave {wave}; awaiting player Start Battle");
         }
     }
 
@@ -1540,14 +1542,10 @@ public sealed class VersusBehaviour : MonoBehaviour
                 return;
             }
 
-            // Advance the wave once both peers have applied the decision.
-            if (!_resultHandled && _waveResolvedWave == wave && Time.time >= _nextWaveAt)
-            {
-                _nextWaveAt = Time.time + 5f;
-                VersusPlugin.Log.LogInfo($"wave-loop: advancing {wave} -> {wave + 1}");
-                Core.Wave.SetWave(wave + 1, true, false, false);
-                return;
-            }
+            // Do NOT force the wave forward: the game's own wave completion runs
+            // the shop/rewards and rebuilds the placing view. Forcing SetWave here
+            // skipped the shop and left no placing view (softlock). Waves advance
+            // naturally; peers are kept together by the snapshot/board exchange.
 
             if (VersusNet.Mode == "join" && VersusNet.ResultLoser >= 0 && !_resultHandled)
             {
