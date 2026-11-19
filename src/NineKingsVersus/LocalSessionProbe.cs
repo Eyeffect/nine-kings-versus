@@ -2117,6 +2117,16 @@ internal static class LocalSessionProbe
 
     public static void ProbeUiGetters()
     {
+        try
+        {
+            var hubPerks = UnityEngine.Resources.FindObjectsOfTypeAll<MultiplayerHubInterface.MultiplayerHubPerksUI>();
+            VersusPlugin.Log.LogInfo($"ui-getter: HubPerksUI count={hubPerks?.Length ?? -1}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"ui-getter: HubPerksUI type unknown ({e.Message})");
+        }
+
         var names = new[]
         {
             "Compendium", "PerkShowcase", "MissionScreen", "EnemyShowcase",
@@ -2144,6 +2154,18 @@ internal static class LocalSessionProbe
     {
         try
         {
+            // PauseMenu.Show() dereferences MultiplayerHubPerksUI.Instance (the hub
+            // perks screen is not present in the Gameplay scene). Create a minimal
+            // instance so that check no longer throws.
+            var hubPerks = UnityEngine.Resources.FindObjectsOfTypeAll<MultiplayerHubInterface.MultiplayerHubPerksUI>();
+            if (hubPerks == null || hubPerks.Length == 0)
+            {
+                var go = new UnityEngine.GameObject("VersusHubPerksUI");
+                go.AddComponent<MultiplayerHubInterface.MultiplayerHubPerksUI>();
+                UnityEngine.Object.DontDestroyOnLoad(go);
+                VersusPlugin.Log.LogInfo("native-pause: created placeholder MultiplayerHubPerksUI");
+            }
+
             var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
             var menu = all != null && all.Length > 0 ? all[0] : null;
             if (menu == null)
