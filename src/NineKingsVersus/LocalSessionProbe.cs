@@ -1889,6 +1889,7 @@ internal static class LocalSessionProbe
     }
 
     private static UnityEngine.GameObject _pauseOverlay;
+    private static bool _paused;
 
     private static void EnsurePauseOverlay()
     {
@@ -1985,11 +1986,101 @@ internal static class LocalSessionProbe
 
     public static void TogglePause()
     {
-        EnsurePauseOverlay();
-        var showing = _pauseOverlay.activeSelf;
-        _pauseOverlay.SetActive(!showing);
-        UnityEngine.Time.timeScale = showing ? 1f : 0f;
-        VersusPlugin.Log.LogInfo($"escape: pause overlay showing={!showing}");
+        // First try the game's native pause menu. Its Show() throws partway through
+        // in the attached run (finalizer swallows it), so afterwards force the child
+        // panels and CanvasGroups that Show() never got to activate.
+        TryNativePause();
+
+        var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+        var menu = all != null && all.Length > 0 ? all[0] : null;
+        var stateProp = typeof(Core.GameplayUI_PauseMenu).GetProperty("PauseMenuOnScreen",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Static);
+        var on = _paused;
+        if (menu != null && !on)
+        {
+            var mainField = typeof(Core.GameplayUI_PauseMenu).GetField("m_MainPanel",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var mainPanel = mainField?.GetValue(menu) as UnityEngine.GameObject;
+            if (mainPanel != null)
+            {
+                mainPanel.SetActive(true);
+            }
+
+            var groups = menu.GetComponentsInChildren<UnityEngine.CanvasGroup>(true);
+            if (groups != null)
+            {
+                foreach (var g in groups)
+                {
+                    g.alpha = 1f;
+                    g.interactable = true;
+                    g.blocksRaycasts = true;
+                }
+            }
+
+            var bg = menu.GetComponent<UnityEngine.UI.Image>();
+            if (bg != null) bg.enabled = true;
+            VersusPlugin.Log.LogInfo($"escape: native pause forced active={menu.gameObject.activeInHierarchy}");
+        }
+        else if (menu != null)
+        {
+            menu.gameObject.SetActive(false);
+        }
+
+        _paused = !on;
+        stateProp?.SetValue(null, _paused);
+        UnityEngine.Time.timeScale = on ? 1f : 0f;
+        VersusPlugin.Log.LogInfo($"escape: pause toggled on={_paused}");
+    }
+
+    public static void ProbeUiGetters()
+    {
+        var names = new[]
+        {
+            "Compendium", "PerkShowcase", "MissionScreen", "EnemyShowcase",
+            "PlacingView", "BattleBar", "HandCards", "PauseMenu", "Year99Warning",
+            "FinalWave", "EndUI", "MultiplayerScreen",
+        };
+        foreach (var name in names)
+        {
+            try
+            {
+                var prop = typeof(GameplayInterface.GameplayUI).GetProperty(name,
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Static);
+                var value = prop?.GetValue(null);
+                VersusPlugin.Log.LogInfo($"ui-getter: {name} = {(value == null ? "NULL" : "set")}");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"ui-getter: {name} THREW {(e.InnerException ?? e).GetType().Name}: {(e.InnerException ?? e).Message}");
+            }
+        }
+    }
+
+    public static void TryNativePause()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+            var menu = all != null && all.Length > 0 ? all[0] : null;
+            if (menu == null)
+            {
+                VersusPlugin.Log.LogWarning("native-pause: menu not found");
+                return;
+            }
+
+            var method = typeof(Core.GameplayUI_PauseMenu).GetMethod("SwitchVisibility",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            method?.Invoke(menu, null);
+            VersusPlugin.Log.LogInfo($"native-pause: SwitchVisibility done active={menu.gameObject.activeInHierarchy}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"native-pause threw: {(e.InnerException ?? e).Message}");
+        }
     }
 
     public static void TogglePauseNative()

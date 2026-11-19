@@ -405,6 +405,20 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Show")]
+    internal static class PauseShowFinalizerPatch
+    {
+        private static System.Exception Finalizer(System.Exception __exception)
+        {
+            if (__exception != null)
+            {
+                VersusPlugin.Log.LogWarning($"PauseMenu.Show swallowed: {(__exception.InnerException ?? __exception).Message}");
+            }
+
+            return null;
+        }
+    }
+
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "CanOpenPauseMenu")]
     internal static class CanOpenPauseMenuPatch
     {

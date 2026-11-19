@@ -80,6 +80,20 @@ public sealed class VersusBehaviour : MonoBehaviour
         LocalSessionProbe.PumpDiplomatView();
         LocalSessionProbe.PumpEscape();
 
+        var probeUi = System.IO.Path.Combine(VersusPlugin.DataDir, "probe-ui-getters");
+        if (System.IO.File.Exists(probeUi))
+        {
+            System.IO.File.Delete(probeUi);
+            LocalSessionProbe.ProbeUiGetters();
+        }
+
+        var nativeEscape = System.IO.Path.Combine(VersusPlugin.DataDir, "test-escape-native");
+        if (System.IO.File.Exists(nativeEscape))
+        {
+            System.IO.File.Delete(nativeEscape);
+            LocalSessionProbe.TryNativePause();
+        }
+
         var forceEscape = System.IO.Path.Combine(VersusPlugin.DataDir, "test-escape");
         if (System.IO.File.Exists(forceEscape))
         {
