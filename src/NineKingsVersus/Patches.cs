@@ -116,6 +116,30 @@ internal static class Patches
                     }
                 }
 
+                // The game only calls RefreshWaveKing from its end-UI path, which our
+                // offline run never reaches. Rotate the gauntlet king each wave here.
+                try
+                {
+                    var properties = Core.Wave.CurrentWaveProperties;
+                    var refresh = properties?.GetType().GetMethod("RefreshWaveKing",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance);
+                    if (refresh != null)
+                    {
+                        var enumType = refresh.GetParameters()[0].ParameterType;
+                        var avoid = System.Enum.ToObject(enumType, 0);
+                        refresh.Invoke(properties, new object[] { avoid });
+                    }
+                    else
+                    {
+                        VersusPlugin.Log.LogWarning($"StartWave: RefreshWaveKing not found props={(properties == null ? "null" : "set")}");
+                    }
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"StartWave RefreshWaveKing failed: {e.Message}");
+                }
+
                 VersusBehaviour.ScheduleVerification();
             }
             catch (Exception e)
@@ -380,14 +404,15 @@ internal static class Patches
         }
     }
 
-    [HarmonyPatch(typeof(Core.Wave), "RefreshWaveKing")]
+    [HarmonyPatch(typeof(Core.WaveProperties), "RefreshWaveKing")]
     internal static class RefreshWaveKingPatch
     {
         private static void Postfix()
         {
             var wave = Core.Wave.Data?.Wave ?? -1;
             var king = Core.Wave.WaveKing?.Scriptable?.name ?? "null";
-            VersusPlugin.Log.LogInfo($"wave-king: wave={wave} selected={king}");
+            var owner = Core.Wave.WaveKing?.Owner.ToString() ?? "null";
+            VersusPlugin.Log.LogInfo($"wave-king: wave={wave} selected={king} owner={owner}");
         }
     }
 

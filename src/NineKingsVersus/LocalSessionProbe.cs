@@ -547,9 +547,12 @@ internal static class LocalSessionProbe
             typeof(MultiplayerSession).GetProperty("GauntletEnemies",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
                 ?.SetValue(session, gauntlet);
+            // Leave GauntletActive false: PrepareMultiplayerGauntlet early-returns when
+            // it is already true, so RefreshWaveKing would never run and the same king
+            // would be fought every round. The game sets it itself when it populates.
             typeof(MultiplayerSession).GetProperty("GauntletActive",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.SetValue(session, true);
+                ?.SetValue(session, false);
 
             var previous = MultiplayerManager.Session?.Pointer ?? IntPtr.Zero;
             MultiplayerManager.Session = session;
