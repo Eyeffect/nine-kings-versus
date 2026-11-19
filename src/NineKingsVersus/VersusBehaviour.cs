@@ -122,7 +122,10 @@ public sealed class VersusBehaviour : MonoBehaviour
             _mpScreenAt = -1f;
             _mpScreenShown = true;
             LocalSessionProbe.ShowMpScreen();
-            LocalSessionProbe.PlayYearShowcase();
+            // Do not force YearShowcase/EnemyShowcase here: an active EnemyShowcase
+            // makes CanOpenPauseMenu return false, which is why Escape stopped
+            // working. The game shows these panels itself when enemies are declared;
+            // PumpEnemyShowcase/PumpDiplomatView dismiss them after a short delay.
         }
 
         var clickStart = System.IO.Path.Combine(VersusPlugin.DataDir, "click-start");

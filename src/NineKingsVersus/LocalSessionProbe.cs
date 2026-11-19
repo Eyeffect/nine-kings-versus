@@ -1508,7 +1508,6 @@ internal static class LocalSessionProbe
         fresh.WaveData.IsMultiplayer = false;
         fresh.WaveData.UnitsKilled = 0;
         fresh.WaveData.UnitsTrained = 0;
-        fresh.WaveData.GoldCollected = 0;
 
         fresh.Kings.PlayerKing = FreshKingName(owner);
         // A match starts with three active enemy kings. They rotate between battles
