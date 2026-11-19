@@ -78,6 +78,14 @@ public sealed class VersusBehaviour : MonoBehaviour
         VersusNet.Tick();
         LocalSessionProbe.PumpEnemyShowcase();
         LocalSessionProbe.PumpDiplomatView();
+        LocalSessionProbe.PumpEscape();
+
+        var forceEscape = System.IO.Path.Combine(VersusPlugin.DataDir, "test-escape");
+        if (System.IO.File.Exists(forceEscape))
+        {
+            System.IO.File.Delete(forceEscape);
+            LocalSessionProbe.TogglePause();
+        }
 
         if (_pendingEndType.HasValue && _endRetryAt > 0f && Time.time >= _endRetryAt)
         {

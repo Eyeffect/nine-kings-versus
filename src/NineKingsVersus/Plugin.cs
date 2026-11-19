@@ -47,6 +47,7 @@ public sealed class VersusPlugin : BasePlugin
             PatchOne(harmony, typeof(Patches.PopulateEnemyFacesPatch));
             PatchOne(harmony, typeof(Patches.UserFaceSetupPatch));
             PatchOne(harmony, typeof(Patches.RefreshWaveKingPatch));
+            PatchOne(harmony, typeof(Patches.CanOpenPauseMenuPatch));
             Log.LogInfo("Harmony patches applied");
         }
         catch (Exception e)

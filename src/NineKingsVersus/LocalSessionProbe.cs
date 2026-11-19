@@ -1814,6 +1814,69 @@ internal static class LocalSessionProbe
         }
     }
 
+    private static bool _escHeld;
+
+    /// <summary>
+    /// The game's OpenPauseMenu InputAction is blocked in our attached run (its
+    /// CanOpenPauseMenu check fails). Handle Escape directly and call the native
+    /// pause menu's own toggle so the real pause UI still works.
+    /// </summary>
+    public static void PumpEscape()
+    {
+        try
+        {
+            var keyboard = UnityEngine.InputSystem.Keyboard.current;
+            var down = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
+            if (!down || _escHeld)
+            {
+                if (!down)
+                {
+                    _escHeld = false;
+                }
+
+                return;
+            }
+
+            _escHeld = true;
+            TogglePause();
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"escape key failed: {e.Message}");
+        }
+    }
+
+    public static void TogglePause()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+            var menu = all != null && all.Length > 0 ? all[0] : null;
+            if (menu == null)
+            {
+                VersusPlugin.Log.LogWarning("escape: pause menu not found");
+                return;
+            }
+
+            // SwitchVisibility -> Show() NREs in the attached run (a null tier
+            // collection), so toggle the panel/state directly. The menu's own
+            // Resume/Forfeit/Menu buttons keep their native listeners.
+            var stateProp = typeof(Core.GameplayUI_PauseMenu).GetProperty("PauseMenuOnScreen",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Static);
+            var on = stateProp != null && stateProp.GetValue(null) is bool b && b;
+            menu.gameObject.SetActive(!on);
+            stateProp?.SetValue(null, !on);
+            UnityEngine.Time.timeScale = on ? 1f : 0f;
+            VersusPlugin.Log.LogInfo($"escape: pause toggled on={!on}");
+        }
+        catch (Exception e)
+        {
+            var inner = e.InnerException ?? e;
+            VersusPlugin.Log.LogWarning($"escape failed: {inner.GetType().Name}: {inner.Message}\n{inner}");
+        }
+    }
+
     public static void PlayYearShowcase()
     {
         try

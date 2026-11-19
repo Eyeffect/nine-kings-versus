@@ -405,6 +405,17 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "CanOpenPauseMenu")]
+    internal static class CanOpenPauseMenuPatch
+    {
+        private static void Postfix(ref bool __result)
+        {
+            // In our attached run several modal checks in the native method are
+            // stuck true, so Escape can never open the pause menu. Allow it.
+            __result = true;
+        }
+    }
+
     [HarmonyPatch(typeof(Core.WaveProperties), "RefreshWaveKing")]
     internal static class RefreshWaveKingPatch
     {
