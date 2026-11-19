@@ -1816,6 +1816,9 @@ internal static class LocalSessionProbe
 
     private static bool _escHeld;
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
     /// <summary>
     /// The game's OpenPauseMenu InputAction is blocked in our attached run (its
     /// CanOpenPauseMenu check fails). Handle Escape directly and call the native
@@ -1825,15 +1828,18 @@ internal static class LocalSessionProbe
     {
         try
         {
+            // Unity's Input System does not deliver Escape in the attached run, so
+            // read the OS key state directly (VK_ESCAPE = 0x1B, high bit = down).
+            var pressed = (GetAsyncKeyState(0x1B) & 0x8000) != 0;
             var keyboard = UnityEngine.InputSystem.Keyboard.current;
-            var pressed = keyboard != null && keyboard.escapeKey.isPressed;
-            if (!pressed)
+            var edge = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
+            if (!edge && !pressed)
             {
                 _escHeld = false;
                 return;
             }
 
-            if (_escHeld)
+            if (_escHeld && !edge)
             {
                 return;
             }
@@ -1844,6 +1850,28 @@ internal static class LocalSessionProbe
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"escape key failed: {e.Message}");
+        }
+    }
+
+    private static void DumpPauseFields(Core.GameplayUI_PauseMenu menu)
+    {
+        try
+        {
+            var fields = typeof(Core.GameplayUI_PauseMenu).GetFields(
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            foreach (var f in fields)
+            {
+                var v = f.GetValue(menu);
+                if (v == null || (v is UnityEngine.Object u && u == null))
+                {
+                    VersusPlugin.Log.LogWarning($"pause-field NULL: {f.Name} ({f.FieldType.Name})");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"pause field dump failed: {e.Message}");
         }
     }
 
@@ -1860,7 +1888,111 @@ internal static class LocalSessionProbe
         return string.Join("/", parts);
     }
 
+    private static UnityEngine.GameObject _pauseOverlay;
+
+    private static void EnsurePauseOverlay()
+    {
+        if (_pauseOverlay != null)
+        {
+            return;
+        }
+
+        var root = new UnityEngine.GameObject("VersusPause");
+        root.AddComponent<UnityEngine.RectTransform>();
+        var canvas = root.AddComponent<UnityEngine.Canvas>();
+        canvas.renderMode = UnityEngine.RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 2000;
+        root.AddComponent<UnityEngine.UI.CanvasScaler>();
+        root.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+        UnityEngine.Object.DontDestroyOnLoad(root);
+
+        var panel = new UnityEngine.GameObject("Panel");
+        panel.AddComponent<UnityEngine.RectTransform>();
+        panel.transform.SetParent(root.transform, false);
+        var rect = panel.GetComponent<UnityEngine.RectTransform>();
+        rect.anchorMin = new UnityEngine.Vector2(0.5f, 0.5f);
+        rect.anchorMax = new UnityEngine.Vector2(0.5f, 0.5f);
+        rect.pivot = new UnityEngine.Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new UnityEngine.Vector2(420f, 260f);
+        var image = panel.AddComponent<UnityEngine.UI.Image>();
+        image.color = new UnityEngine.Color(0.06f, 0.07f, 0.1f, 0.96f);
+
+        TMPro.TMP_Text title = null;
+        var existing = UnityEngine.Resources.FindObjectsOfTypeAll<TMPro.TMP_Text>();
+        var font = existing != null && existing.Length > 0 ? existing[0].font : null;
+
+        var label = new UnityEngine.GameObject("Title");
+        label.AddComponent<UnityEngine.RectTransform>();
+        label.transform.SetParent(panel.transform, false);
+        var lr = label.GetComponent<UnityEngine.RectTransform>();
+        lr.anchorMin = new UnityEngine.Vector2(0f, 1f);
+        lr.anchorMax = new UnityEngine.Vector2(1f, 1f);
+        lr.pivot = new UnityEngine.Vector2(0.5f, 1f);
+        lr.anchoredPosition = new UnityEngine.Vector2(0f, -20f);
+        lr.sizeDelta = new UnityEngine.Vector2(0f, 50f);
+        title = label.AddComponent<TMPro.TextMeshProUGUI>();
+        title.text = "PAUSED";
+        title.alignment = TMPro.TextAlignmentOptions.Center;
+        title.fontSize = 34;
+        title.color = UnityEngine.Color.white;
+        if (font != null) title.font = font;
+
+        AddPauseButton(panel.transform, "RESUME", -70f, font, () => TogglePause());
+        AddPauseButton(panel.transform, "QUIT TO MENU", -140f, font, () =>
+        {
+            TogglePause();
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+        });
+
+        root.SetActive(false);
+        _pauseOverlay = root;
+    }
+
+    private static void AddPauseButton(UnityEngine.Transform parent, string caption, float y,
+        TMPro.TMP_FontAsset font, System.Action onClick)
+    {
+        var go = new UnityEngine.GameObject(caption);
+        go.AddComponent<UnityEngine.RectTransform>();
+        go.transform.SetParent(parent, false);
+        var rect = go.GetComponent<UnityEngine.RectTransform>();
+        rect.anchorMin = new UnityEngine.Vector2(0.5f, 1f);
+        rect.anchorMax = new UnityEngine.Vector2(0.5f, 1f);
+        rect.pivot = new UnityEngine.Vector2(0.5f, 1f);
+        rect.anchoredPosition = new UnityEngine.Vector2(0f, y);
+        rect.sizeDelta = new UnityEngine.Vector2(320f, 56f);
+        var img = go.AddComponent<UnityEngine.UI.Image>();
+        img.color = new UnityEngine.Color(0.16f, 0.19f, 0.26f, 1f);
+        var btn = go.AddComponent<UnityEngine.UI.Button>();
+        btn.targetGraphic = img;
+        btn.onClick.AddListener(Il2CppInterop.Runtime.DelegateSupport.ConvertDelegate<UnityEngine.Events.UnityAction>(
+            new System.Action(() => onClick())));
+
+        var label = new UnityEngine.GameObject("Label");
+        label.AddComponent<UnityEngine.RectTransform>();
+        label.transform.SetParent(go.transform, false);
+        var lr = label.GetComponent<UnityEngine.RectTransform>();
+        lr.anchorMin = UnityEngine.Vector2.zero;
+        lr.anchorMax = UnityEngine.Vector2.one;
+        lr.offsetMin = UnityEngine.Vector2.zero;
+        lr.offsetMax = UnityEngine.Vector2.zero;
+        var text = label.AddComponent<TMPro.TextMeshProUGUI>();
+        text.text = caption;
+        text.alignment = TMPro.TextAlignmentOptions.Center;
+        text.fontSize = 22;
+        text.color = UnityEngine.Color.white;
+        if (font != null) text.font = font;
+    }
+
     public static void TogglePause()
+    {
+        EnsurePauseOverlay();
+        var showing = _pauseOverlay.activeSelf;
+        _pauseOverlay.SetActive(!showing);
+        UnityEngine.Time.timeScale = showing ? 1f : 0f;
+        VersusPlugin.Log.LogInfo($"escape: pause overlay showing={!showing}");
+    }
+
+    public static void TogglePauseNative()
     {
         try
         {
@@ -1879,6 +2011,11 @@ internal static class LocalSessionProbe
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                 System.Reflection.BindingFlags.Static);
             var on = stateProp != null && stateProp.GetValue(null) is bool b && b;
+            if (!on)
+            {
+                DumpPauseFields(menu);
+            }
+
             var path = PathOf(menu.transform);
             var parentActive = menu.transform.parent != null && menu.transform.parent.gameObject.activeInHierarchy;
             VersusPlugin.Log.LogInfo($"escape: menu path={path} self={menu.gameObject.activeSelf} parentActive={parentActive} on={on}");
