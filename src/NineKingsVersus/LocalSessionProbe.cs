@@ -527,6 +527,9 @@ internal static class LocalSessionProbe
             MultiplayerManager.Session = session;
             var attached = (MultiplayerManager.Session?.Pointer ?? IntPtr.Zero) == session.Pointer;
 
+            // Apply the player's chosen perk loadout to the session snapshot store.
+            ApplyChosenPerks();
+
             // Keep the hub manager alive across the Gameplay scene load: StartWave's
             // multiplayer branch may dereference it, and the hub scene is unloaded when
             // the run scene loads.
@@ -1394,6 +1397,91 @@ internal static class LocalSessionProbe
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"spawn-api inspection failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    public static void DumpPerks()
+    {
+        try
+        {
+            var unlocked = KingManagement.KingManager.unlockedPerks;
+            VersusPlugin.Log.LogInfo($"dump-perks: unlocked={unlocked?.Count ?? -1}");
+            if (unlocked != null)
+            {
+                var names = new System.Collections.Generic.List<string>();
+                foreach (var term in unlocked)
+                {
+                    names.Add(term);
+                }
+
+                VersusPlugin.Log.LogInfo($"dump-perks: terms=[{string.Join(",", names)}]");
+            }
+
+            LocalSessionProbe.ReadChoices(out var kingId, out var _);
+            var owner = kingId >= 0 ? (Core.CardOwnership)kingId : Core.CardOwnership.KingOfNothing;
+            var active = KingManagement.KingManager.GetAllKingActivePerks(owner);
+            VersusPlugin.Log.LogInfo($"dump-perks: owner={owner} active={active?.Count ?? -1}");
+            if (active != null)
+            {
+                foreach (var slot in active)
+                {
+                    VersusPlugin.Log.LogInfo($"dump-perks: slot term={slot.perkTerm} level={slot.level} x={slot.x} y={slot.y}");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"dump-perks failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Applies the chosen king's active perks to the attached session's snapshot
+    /// store. Decompiled MultiplayerManager.StartGame.MoveNext does exactly this
+    /// after Wave.StartNewGame: GetAllKingActivePerks(owner) -> SetPerks(...).
+    /// </summary>
+    public static void ApplyChosenPerks()
+    {
+        try
+        {
+            ReadChoices(out var kingId, out var perkIndex);
+            var owner = kingId >= 0 ? (Core.CardOwnership)kingId : Core.CardOwnership.KingOfNothing;
+            var session = MultiplayerManager.Session;
+            var snapshots = session?.Snapshots;
+            if (snapshots == null)
+            {
+                VersusPlugin.Log.LogWarning("perks: no session snapshots to apply to");
+                return;
+            }
+
+            // The official flow reads active perks from KingManager. Add the chosen
+            // loadout's perks first (GetAllKingActivePerks returns none otherwise),
+            // then hand them to the session's snapshot store exactly as the game's
+            // StartGame.MoveNext does.
+            var unlocked = KingManagement.KingManager.unlockedPerks;
+            if (unlocked != null && unlocked.Count > 0)
+            {
+                var start = (Math.Max(1, perkIndex) - 1) * 3;
+                for (var i = 0; i < 3 && start + i < unlocked.Count; i++)
+                {
+                    var settings = new PerkSystem.PerkSettings
+                    {
+                        Name = unlocked[start + i],
+                        Level = 1,
+                    };
+                    KingManagement.KingManager.AddPerkSettings(owner, settings);
+                }
+            }
+
+            var perks = KingManagement.KingManager.GetAllKingActivePerks(owner);
+            var count = perks?.Count ?? 0;
+            var enumerable = perks?.Cast<Il2CppSystem.Collections.Generic.IEnumerable<PerkSystem.PerkSlotSettings>>();
+            snapshots.SetPerks(enumerable);
+            VersusPlugin.Log.LogInfo($"perks: applied {count} active perks for {owner} (loadout={perkIndex})");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"perks apply failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
         }
     }
 

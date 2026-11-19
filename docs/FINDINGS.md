@@ -323,3 +323,15 @@ Two disposable copies (`local\testgame` host, `local\testgame2` join) were launc
 - The attached session's combat simulation stalls: entity counts stay constant and no life is lost. The result therefore comes from the host's 18 s timeout decision (fewer lives loses; exact tie → host), not from units actually killing each other. Real army-elimination results are still not achieved.
 - Perk loadout is still only stored, not applied.
 - Only loopback two-process tests have run; no true two-PC LAN validation yet.
+
+## Full match loop (2026-11-19, part 2)
+
+Decompiled the official flow: `MultiplayerManager.StartGame.MoveNext` (matchmaking → `MultiplayerSession(runs, season pools)` → `Wave.StartNewGame(isMultiplayer=true)` → `KingManager.GetAllKingActivePerks(owner)` → `MultiplayerSession.Snapshots.SetPerks`); `Wave.PrepareMultiplayerGauntlet` → `Session.PopulateGauntletEnemies()` → `BecomeEnemy()` on the opponent kings; `PlayerBase.ReceivedMultiplayerEnemyBaseDamage`/`ReceivedLethalDamage` for life loss.
+
+`Wave.StartNewGame(isMultiplayer=true)` NREs offline in every argument variant (hub manager alive or not), so the official run-init path is unavailable. We load from a snapshot (`LoadGame`) and reimplement the loop:
+
+- **Perks applied for real:** `KingManager.AddPerkSettings(owner, PerkSettings{Name, Level})` then `GetAllKingActivePerks` → `MultiplayerGameSnapshots.SetPerks`. 30 perk terms exist. Verified: `perks: applied 1 active perks for KingOfNothing (loadout=2)` on both peers.
+- **Multi-wave loop:** the host resolves each wave after a 12 s grace period (lower life count wins; then snapshot `UnitsKilled`; then stable alternation by wave number), broadcasts a `wavewin` message, both peers decrement the loser's life and advance via `SetWave`. The match ends when a life reaches 0. Verified waves 15–20 resolving in sync: host `0/2` → `OnCompleteGame(Defeat)`, join `2/0` → `OnCompleteGame(Victory)`.
+- Removed the single-wave freeze (`ResultPending` now freezes only after the match result). This replaces the earlier one-shot timeout result.
+
+Still unverified: real units fighting (attached-session combat stalls), army-elimination results, true two-PC LAN.

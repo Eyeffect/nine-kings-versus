@@ -39,6 +39,8 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static int _localEliminatedWave = -1;
     private static float _combatSince = -1f;
     private static int _combatSinceWave = -1;
+    private static int _waveResolvedWave = -1;
+    private static float _nextWaveAt = -1f;
     private static int _verifySamples;
     private float _autoAt = -1f;
     private static float _attachRetryAt = -1f;
@@ -87,6 +89,13 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             System.IO.File.Delete(dumpTroops);
             TroopCatalog.Dump();
+        }
+
+        var dumpPerks = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-perks");
+        if (System.IO.File.Exists(dumpPerks))
+        {
+            System.IO.File.Delete(dumpPerks);
+            LocalSessionProbe.DumpPerks();
         }
 
         var skipIntro = System.IO.Path.Combine(VersusPlugin.DataDir, "skip-intro");
@@ -467,6 +476,9 @@ public sealed class VersusBehaviour : MonoBehaviour
             VersusPlugin.Log.LogInfo("attach-flow: hub active, attaching session and starting multiplayer run");
             if (LocalSessionProbe.AttachForMultiplayerStart(out _))
             {
+                // Wave.StartNewGame(isMultiplayer=true) is unusable offline (NRE), so
+                // the run is loaded from a snapshot. AttachForMultiplayerStart has
+                // already built the session, gauntlet and perk loadout by then.
                 LocalSessionProbe.LoadProbeRun();
             }
             else
@@ -1469,42 +1481,43 @@ public sealed class VersusBehaviour : MonoBehaviour
             {
                 _combatSinceWave = wave;
                 _combatSince = Time.time;
+                VersusPlugin.Log.LogInfo($"wave-loop: combat engaged at wave {wave}");
             }
 
-            // Fallback result: an attached session's combat can stall with no life
-            // change, so the life-based decision never fires. After a grace period
-            // the host decides: fewer lives loses; an exact tie falls to the host
-            // (a deterministic tiebreak both peers share). If real combat resolves
-            // lives first, the normal decision below takes priority.
+            // Resolve a wave after a grace period. The attached session's combat can
+            // stall with no life change, so the host decides from the life counters
+            // (falling back to snapshot kills, then a deterministic alternation) and
+            // broadcasts the wave loser to both peers.
             if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
-                VersusNet.StateVersion > 0 && VersusNet.PeerReadyWave > 0 &&
-                !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson) &&
-                _combatSince > 0f && Time.time - _combatSince >= 18f)
+                _combatSince > 0f && Time.time - _combatSince >= 12f &&
+                _waveResolvedWave != wave && VersusNet.StateVersion > 0)
             {
-                var loser = (myLives >= 0 && peerLives >= 0 && myLives < peerLives) ? 0 : 1;
-                _resultHandled = true;
-                VersusPlugin.Log.LogInfo(
-                    $"match-result: timeout decision hostLives={myLives} joinLives={peerLives} " +
-                    $"loser={(loser == 0 ? "host" : "join")}");
-                VersusNet.SendResult(loser);
-                ApplyMatchResult(loser);
+                var loser = DecideWaveLoser(myLives, peerLives, wave);
+                _waveResolvedWave = wave;
+                VersusNet.SendWaveWin(wave, loser);
+                ApplyWaveWin(wave, loser);
                 return;
             }
 
-            if (VersusNet.Mode == "host")
+            // The join applies the host's wave decision for this wave.
+            if (VersusNet.Mode == "join" && !_resultHandled && wave > 0 &&
+                VersusNet.WaveWinWave == wave && _waveResolvedWave != wave)
             {
-                if (!_resultHandled && VersusNet.PeerReadyWave == wave &&
-                    myLives >= 0 && peerLives >= 0 && myLives != peerLives)
-                {
-                    var loser = myLives < peerLives ? 0 : 1;
-                    _resultHandled = true;
-                    VersusPlugin.Log.LogInfo(
-                        $"match-result: host decision hostLives={myLives} joinLives={peerLives} loser={(loser == 0 ? "host" : "join")}");
-                    VersusNet.SendResult(loser);
-                    ApplyMatchResult(loser);
-                }
+                _waveResolvedWave = wave;
+                ApplyWaveWin(wave, VersusNet.WaveWinLoser);
+                return;
             }
-            else if (VersusNet.ResultLoser >= 0 && !_resultHandled)
+
+            // Advance the wave once both peers have applied the decision.
+            if (!_resultHandled && _waveResolvedWave == wave && Time.time >= _nextWaveAt)
+            {
+                _nextWaveAt = Time.time + 5f;
+                VersusPlugin.Log.LogInfo($"wave-loop: advancing {wave} -> {wave + 1}");
+                Core.Wave.SetWave(wave + 1, true, false, false);
+                return;
+            }
+
+            if (VersusNet.Mode == "join" && VersusNet.ResultLoser >= 0 && !_resultHandled)
             {
                 ApplyMatchResult(VersusNet.ResultLoser);
             }
@@ -1513,6 +1526,93 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             VersusPlugin.Log.LogWarning($"match-result failed: {e.GetType().Name}: {e.Message}");
         }
+    }
+
+    /// <summary>
+    /// Picks the loser of one wave. Real life loss wins; otherwise compare the
+    /// units each side killed in their snapshots, then fall back to a stable
+    /// wave-based alternation. The host computes it and both peers apply it.
+    /// </summary>
+    private static int DecideWaveLoser(int myLives, int peerLives, int wave)
+    {
+        if (myLives >= 0 && peerLives >= 0 && myLives != peerLives)
+        {
+            return myLives < peerLives ? 0 : 1;
+        }
+
+        var localJson = LatestLocalSnapshot();
+        if (!string.IsNullOrEmpty(localJson) && !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
+        {
+            var mine = SnapshotKills(localJson);
+            var theirs = SnapshotKills(VersusNet.OpponentSnapshotJson);
+            if (mine >= 0 && theirs >= 0 && mine != theirs)
+            {
+                return mine < theirs ? 0 : 1;
+            }
+        }
+
+        // Stable tiebreak: host loses even waves, join loses odd waves.
+        return wave % 2 == 0 ? 0 : 1;
+    }
+
+    private static int SnapshotKills(string json)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("WaveData", out var waveData) &&
+                waveData.TryGetProperty("UnitsKilled", out var killed))
+            {
+                return killed.GetInt32();
+            }
+        }
+        catch
+        {
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Applies a resolved wave on this peer: decrement the loser's life counter
+    /// and either end the match or schedule the next wave.
+    /// </summary>
+    private static void ApplyWaveWin(int wave, int loser)
+    {
+        var host = VersusNet.Mode == "host";
+        var myLives = VersusNet.LocalLives;
+        var peerLives = VersusNet.PeerLives;
+
+        if (loser == 0)
+        {
+            if (host) myLives--; else peerLives--;
+        }
+        else
+        {
+            if (host) peerLives--; else myLives--;
+        }
+
+        VersusNet.SetLocalLives(myLives);
+        VersusNet.SetPeerLives(peerLives);
+        VersusPlugin.Log.LogInfo(
+            $"wave-loop: wave {wave} resolved, loser={(loser == 0 ? "host" : "join")} " +
+            $"lives={myLives}/{peerLives} (local/peer)");
+
+        if (myLives <= 0 || peerLives <= 0)
+        {
+            var matchLoser = myLives <= 0 ? (host ? 0 : 1) : (host ? 1 : 0);
+            _resultHandled = true;
+            VersusPlugin.Log.LogInfo($"wave-loop: match over, loser={(matchLoser == 0 ? "host" : "join")}");
+            if (host)
+            {
+                VersusNet.SendResult(matchLoser);
+            }
+
+            ApplyMatchResult(matchLoser);
+            return;
+        }
+
+        _nextWaveAt = Time.time + 4f;
     }
 
     private static string LatestLocalSnapshot()
@@ -1572,8 +1672,16 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
     }
 
+    private static bool _endShown;
+
     private static void ApplyMatchResult(int loser)
     {
+        if (_endShown)
+        {
+            return;
+        }
+
+        _endShown = true;
         _resultHandled = true;
         var iAmLoser = (VersusNet.Mode == "host" && loser == 0) || (VersusNet.Mode == "join" && loser == 1);
         VersusPlugin.Log.LogInfo($"match-result: applying {(iAmLoser ? "defeat" : "victory")} on {VersusNet.Mode}");
@@ -1724,16 +1832,16 @@ public sealed class VersusBehaviour : MonoBehaviour
         _endRetryCount = 0;
         _combatSince = -1f;
         _combatSinceWave = -1;
+        _waveResolvedWave = -1;
+        _nextWaveAt = -1f;
+        _endShown = false;
         VersusNet.ResetMatchState();
     }
 
     public static bool ResultPending()
     {
-        // Freeze the wave once combat has engaged: an undecided peer auto-advancing
-        // to the next wave desynchronises the handshake and makes the other side
-        // fight alone, which produced unfair life-based results.
-        return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0 ||
-               _combatSince > 0f;
+        // Freeze only after the MATCH is decided. Individual waves advance in sync.
+        return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0;
     }
 
     public static bool ClaimStartWave()
@@ -1745,9 +1853,9 @@ public sealed class VersusBehaviour : MonoBehaviour
             return true;
         }
 
-        if (_resultHandled || _combatSince > 0f)
+        if (_resultHandled)
         {
-            VersusPlugin.Log.LogWarning("StartWave blocked: combat engaged, wave frozen until result");
+            VersusPlugin.Log.LogWarning("StartWave blocked: match result already decided");
             return false;
         }
 

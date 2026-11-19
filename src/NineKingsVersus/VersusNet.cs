@@ -54,6 +54,8 @@ internal static class VersusNet
     private static int _incomingLoser = -1;
     private static int _incomingEliminated = -1;
     private static int _incomingHostWave = -1;
+    private static int _incomingWaveWinLoser = -1;
+    private static int _incomingWaveWinWave = -1;
     private static int _stateVersion;
 
     public static string Mode { get; private set; } = "off";
@@ -77,12 +79,23 @@ internal static class VersusNet
     /// <summary>Wave number the host reports, for keeping both copies in sync.</summary>
     public static int HostWave { get; private set; } = -1;
 
+    /// <summary>Host-authoritative loser (0=host, 1=join) of the last resolved wave.</summary>
+    public static int WaveWinLoser { get; private set; } = -1;
+
+    /// <summary>Wave number of the last resolved wave, or -1.</summary>
+    public static int WaveWinWave { get; private set; } = -1;
+
     /// <summary>Local life count from the latest captured snapshot.</summary>
     public static int LocalLives { get; private set; } = -1;
 
     public static void SetLocalLives(int lives)
     {
         LocalLives = lives;
+    }
+
+    public static void SetPeerLives(int lives)
+    {
+        PeerLives = lives;
     }
 
     /// <summary>Host-authoritative loser (0=host, 1=join), or -1.</summary>
@@ -146,6 +159,8 @@ internal static class VersusNet
         int loser;
         int eliminated;
         int hostWave;
+        int waveWinLoser;
+        int waveWinWave;
 
         lock (Lock)
         {
@@ -157,12 +172,16 @@ internal static class VersusNet
             loser = _incomingLoser;
             eliminated = _incomingEliminated;
             hostWave = _incomingHostWave;
+            waveWinLoser = _incomingWaveWinLoser;
+            waveWinWave = _incomingWaveWinWave;
             _incomingState = null;
             _incomingReadyWave = -1;
             _incomingGoWave = -1;
             _incomingLoser = -1;
             _incomingEliminated = -1;
             _incomingHostWave = -1;
+            _incomingWaveWinLoser = -1;
+            _incomingWaveWinWave = -1;
         }
 
         if (state != null)
@@ -207,6 +226,13 @@ internal static class VersusNet
         {
             HostWave = hostWave;
         }
+
+        if (waveWinLoser >= 0 && waveWinWave > 0)
+        {
+            WaveWinLoser = waveWinLoser;
+            WaveWinWave = waveWinWave;
+            VersusPlugin.Log.LogInfo($"net: wave {waveWinWave} winner decided, loser={(waveWinLoser == 0 ? "host" : "join")}");
+        }
     }
 
     public static void SendState(int wave, string snapshotJson, int lives)
@@ -239,6 +265,11 @@ internal static class VersusNet
         Send(new Message { type = "sync", wave = wave });
     }
 
+    public static void SendWaveWin(int wave, int loser)
+    {
+        Send(new Message { type = "wavewin", wave = wave, loser = loser });
+    }
+
     /// <summary>Clears per-match handshake/result state for a rematch (transport untouched).</summary>
     public static void ResetMatchState()
     {
@@ -247,6 +278,8 @@ internal static class VersusNet
         PeerReadyWave = -1;
         GoWave = -1;
         HostWave = -1;
+        WaveWinLoser = -1;
+        WaveWinWave = -1;
         OpponentWave = -1;
         OpponentSnapshotJson = null;
         lock (Lock)
@@ -256,6 +289,8 @@ internal static class VersusNet
             _incomingReadyWave = -1;
             _incomingGoWave = -1;
             _incomingHostWave = -1;
+            _incomingWaveWinLoser = -1;
+            _incomingWaveWinWave = -1;
         }
     }
 
@@ -440,6 +475,10 @@ internal static class VersusNet
                             break;
                         case "sync":
                             _incomingHostWave = message.wave;
+                            break;
+                        case "wavewin":
+                            _incomingWaveWinLoser = message.loser;
+                            _incomingWaveWinWave = message.wave;
                             break;
                     }
                 }
