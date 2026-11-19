@@ -1875,6 +1875,30 @@ internal static class LocalSessionProbe
         return null;
     }
 
+    private static void ShowMainPanel(Core.GameplayUI_PauseMenu menu)
+    {
+        if (menu == null)
+        {
+            return;
+        }
+
+        var main = FindChildByName(menu.transform, "Main");
+        if (main != null)
+        {
+            ActivateAll(main.transform);
+        }
+
+        // Activating Main also wakes its wishlist/casual children - hide them again.
+        foreach (var name in new[] { "SteamBtn", "Casual Representation" })
+        {
+            var child = FindChildByName(menu.transform, name);
+            if (child != null)
+            {
+                child.SetActive(false);
+            }
+        }
+    }
+
     private static void ActivateAll(UnityEngine.Transform t)
     {
         if (t == null)
@@ -2081,7 +2105,7 @@ internal static class LocalSessionProbe
                 if (sub != null && sub.activeSelf)
                 {
                     sub.SetActive(false);
-                    if (mainShown != null) ActivateAll(mainShown.transform);
+                    ShowMainPanel(menu);
                     _paused = true;
                     UnityEngine.Time.timeScale = 0f;
                     VersusPlugin.Log.LogInfo($"escape: backed out of {subName} to main pause");
@@ -2117,8 +2141,7 @@ internal static class LocalSessionProbe
                 }
             }
 
-            var mainPanel = FindChildByName(menu.transform, "Main");
-            if (mainPanel != null) ActivateAll(mainPanel.transform);
+            ShowMainPanel(menu);
 
             // Deactivate sub-panels and the wishlist variant AFTER the activation
             // pass, so they stay off.
