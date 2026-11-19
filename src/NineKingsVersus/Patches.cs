@@ -563,6 +563,17 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Hide")]
+    internal static class PauseHideGuardPatch
+    {
+        private static bool Prefix()
+        {
+            // The game's UI controller re-hides the panel every frame; keep it up
+            // while our pause state is active so the native buttons stay visible.
+            return !LocalSessionProbe.Paused;
+        }
+    }
+
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Initialize")]
     internal static class PauseInitTracePatch
     {

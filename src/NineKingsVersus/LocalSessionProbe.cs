@@ -2002,6 +2002,8 @@ internal static class LocalSessionProbe
         if (font != null) text.font = font;
     }
 
+    public static bool Paused => _paused;
+
     public static void TogglePause()
     {
         // First try the game's native pause menu. Its Show() throws partway through
