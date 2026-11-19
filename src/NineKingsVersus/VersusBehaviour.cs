@@ -120,6 +120,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             _mpScreenAt = -1f;
             _mpScreenShown = true;
             LocalSessionProbe.ShowMpScreen();
+            LocalSessionProbe.PlayYearShowcase();
         }
 
         var showMpScreen = System.IO.Path.Combine(VersusPlugin.DataDir, "show-mp-screen");

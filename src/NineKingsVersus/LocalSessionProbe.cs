@@ -1230,6 +1230,23 @@ internal static class LocalSessionProbe
                 VersusPlugin.Log.LogInfo("build-enemy: MultiplayerMap activated");
             }
 
+            // The run stays single-player for playability, so the game never calls
+            // RefreshMultiplayerMap itself. Invoke it directly so the opponent's
+            // base/castle/walls are built from their snapshot.
+            try
+            {
+                Core.Wave.CurrentMultiplayerEnemySnapshot = snapshot;
+                var refresh = typeof(Core.Wave).GetMethod("RefreshMultiplayerMap",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Static);
+                refresh?.Invoke(null, null);
+                VersusPlugin.Log.LogInfo("build-enemy: RefreshMultiplayerMap invoked");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"build-enemy: RefreshMultiplayerMap failed: {e.Message}");
+            }
+
             VersusPlugin.Log.LogInfo(
                 $"build-enemy: wave={snapshot.WaveData?.WaveNumber} king={snapshot.Kings?.PlayerKing} " +
                 $"areas={snapshot.Areas.Count} map={(map == null ? "null" : map.activeSelf ? "active" : "inactive")}");
@@ -1450,7 +1467,8 @@ internal static class LocalSessionProbe
             : Core.CardOwnership.KingOfSpells;
 
         fresh.WaveData.WaveNumber = 0;
-        fresh.WaveData.PlayerLifes = 3;
+        // Official multiplayer starts with 5 lives, not the 3 of a normal run.
+        fresh.WaveData.PlayerLifes = 5;
         // Keep the run's own wave logic single-player: IsMultiplayer=true makes the
         // game expect a server-driven gauntlet and breaks card play, rewards and the
         // shop in an attached offline session. The opponent is injected separately
@@ -1576,7 +1594,7 @@ internal static class LocalSessionProbe
                 return;
             }
 
-            var screen = screens[0];
+            var screen = GameplayInterface.GameplayUI.MultiplayerScreen ?? screens[0];
             screen.gameObject.SetActive(true);
             var runs = MultiplayerManager.Session?.GauntletEnemies;
             if (runs == null || runs.Count == 0)
@@ -1597,15 +1615,43 @@ internal static class LocalSessionProbe
             var ilOnClick = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<MultiplayerRunData>>(onClick);
             var ilCanInteract = DelegateSupport.ConvertDelegate<Il2CppSystem.Func<bool>>(canInteract);
 
-            var method = typeof(GameplayInterface.GameplayUI_MultiplayerScreen).GetMethod("PopulateEnemyFaces",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
+            var type = typeof(GameplayInterface.GameplayUI_MultiplayerScreen);
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+            type.GetMethod("Show", flags)?.Invoke(screen, null);
+            var method = type.GetMethod("PopulateEnemyFaces", flags);
             method?.Invoke(screen, new object[] { array, ilOnClick, ilCanInteract });
-            VersusPlugin.Log.LogInfo($"mp-screen: populated {runs.Count} enemy faces");
+            type.GetMethod("UpdateFaces", flags)?.Invoke(screen, null);
+            VersusPlugin.Log.LogInfo($"mp-screen: populated {runs.Count} enemy faces (Show+UpdateFaces)");
         }
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"mp-screen failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    public static void PlayYearShowcase()
+    {
+        try
+        {
+            var panels = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_YearShowcasePanel>();
+            if (panels == null || panels.Length == 0)
+            {
+                VersusPlugin.Log.LogWarning("showcase: no YearShowcasePanel found");
+                return;
+            }
+
+            var panel = panels[0];
+            panel.gameObject.SetActive(true);
+            var method = typeof(GameplayInterface.GameplayUI_YearShowcasePanel).GetMethod("ShowcaseYear",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            method?.Invoke(panel, null);
+            VersusPlugin.Log.LogInfo($"showcase: ShowcaseYear invoked panel={panel.name}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"showcase failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
         }
     }
 
