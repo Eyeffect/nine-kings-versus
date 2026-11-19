@@ -470,6 +470,23 @@ internal static class Patches
                 }
             }
 
+            // The native Show() also calls CreateEnemyCards to fill the portrait
+            // row; our override skips it, so invoke it with the native buttons.
+            var createCards = type.GetMethod("CreateEnemyCards", flags);
+            if (createCards != null)
+            {
+                var resume = FindButton(__instance.transform, "ResumeBtn");
+                var menu = FindButton(__instance.transform, "MenuBtn");
+                try
+                {
+                    createCards.Invoke(__instance, new object[] { menu, resume });
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"PauseMenu.CreateEnemyCards threw: {(e.InnerException ?? e).Message}");
+                }
+            }
+
             __instance.gameObject.SetActive(true);
             VersusPlugin.Log.LogInfo("PauseMenu.Show replaced: hub state bypassed, panels activated");
             return false;
@@ -485,6 +502,28 @@ internal static class Patches
             // while our pause state is active so the native buttons stay visible.
             return !LocalSessionProbe.Paused;
         }
+    }
+
+    private static UnityEngine.UI.Button FindButton(UnityEngine.Transform root, string name)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        var all = root.GetComponentsInChildren<UnityEngine.UI.Button>(true);
+        if (all != null)
+        {
+            foreach (var b in all)
+            {
+                if (b.name == name)
+                {
+                    return b;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static string HolderPath(UnityEngine.Transform t)

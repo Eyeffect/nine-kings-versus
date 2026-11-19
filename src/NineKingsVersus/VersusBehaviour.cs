@@ -87,6 +87,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.ProbeUiGetters();
         }
 
+        var facesCheck = System.IO.Path.Combine(VersusPlugin.DataDir, "faces-check");
+        if (System.IO.File.Exists(facesCheck))
+        {
+            System.IO.File.Delete(facesCheck);
+            LocalSessionProbe.CheckEnemyFaces();
+        }
+
         var pauseTree = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-pause-tree");
         if (System.IO.File.Exists(pauseTree))
         {

@@ -2079,6 +2079,37 @@ internal static class LocalSessionProbe
         VersusPlugin.Log.LogInfo($"escape: pause toggled on={_paused}");
     }
 
+    public static void CheckEnemyFaces()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+            var menu = all != null && all.Length > 0 ? all[0] : null;
+            if (menu == null)
+            {
+                VersusPlugin.Log.LogWarning("faces-check: menu not found");
+                return;
+            }
+
+            var holder = menu.transform.Find("Canvas/Holder/Main/VerticalLayout/EnemiesShowcase/EnemyFacesHolder");
+            var images = holder != null ? holder.GetComponentsInChildren<UnityEngine.UI.Image>(true) : null;
+            var withSprite = 0;
+            if (images != null)
+            {
+                foreach (var img in images)
+                {
+                    if (img.sprite != null) withSprite++;
+                }
+            }
+
+            VersusPlugin.Log.LogInfo($"faces-check: holder={(holder == null ? "null" : "set")} images={images?.Length ?? -1} withSprite={withSprite}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"faces-check failed: {e.Message}");
+        }
+    }
+
     public static void DumpPauseHierarchy()
     {
         try
