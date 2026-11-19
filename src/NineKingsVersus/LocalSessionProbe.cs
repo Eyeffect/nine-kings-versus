@@ -2174,6 +2174,21 @@ internal static class LocalSessionProbe
                 return;
             }
 
+            // Ensure the pause menu's Initialize() ran - scene init can NRE offline
+            // and leave its buttons unwired.
+            var init = typeof(Core.GameplayUI_PauseMenu).GetMethod("Initialize",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            try
+            {
+                init?.Invoke(menu, null);
+                VersusPlugin.Log.LogInfo("native-pause: Initialize invoked");
+            }
+            catch (Exception ie)
+            {
+                VersusPlugin.Log.LogWarning($"native-pause: Initialize threw {(ie.InnerException ?? ie).Message}");
+            }
+
             // Call the base UISubController.Show() directly: the override's
             // hub-specific checks NRE offline, but the base handles panel activation.
             var baseShow = typeof(Core.GameplayUI_PauseMenu).BaseType?.GetMethod("Show",

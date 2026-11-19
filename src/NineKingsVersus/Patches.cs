@@ -455,6 +455,15 @@ internal static class Patches
                 }
             }
 
+            var canvases = __instance.GetComponentsInChildren<UnityEngine.Canvas>(true);
+            if (canvases != null)
+            {
+                foreach (var c in canvases)
+                {
+                    c.enabled = true;
+                }
+            }
+
             __instance.gameObject.SetActive(true);
             VersusPlugin.Log.LogInfo("PauseMenu.Show replaced: hub state bypassed, panels activated");
             return false;

@@ -21,6 +21,8 @@ public sealed class VersusPlugin : BasePlugin
     {
         Log = base.Log;
         UnityEngine.Application.runInBackground = true;
+        UnityEngine.Application.stackTraceLogType = UnityEngine.StackTraceLogType.Full;
+        System.AppDomain.CurrentDomain.FirstChanceException += OnFirstChance;
         DataDir = Path.Combine(Paths.BepInExRootPath, "versus");
         Directory.CreateDirectory(DataDir);
 
@@ -65,6 +67,15 @@ public sealed class VersusPlugin : BasePlugin
         catch (Exception e)
         {
             Log.LogError($"Behaviour install failed: {e}");
+        }
+    }
+
+    private static void OnFirstChance(object sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs args)
+    {
+        var e = args.Exception;
+        if (e is System.NullReferenceException)
+        {
+            Log.LogWarning($"[NRE] {e.StackTrace}");
         }
     }
 
