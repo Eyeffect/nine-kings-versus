@@ -406,20 +406,6 @@ internal static class Patches
     }
 
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Show")]
-    internal static class PauseShowFinalizerPatch
-    {
-        private static System.Exception Finalizer(System.Exception __exception)
-        {
-            if (__exception != null)
-            {
-                VersusPlugin.Log.LogWarning($"PauseMenu.Show swallowed: {(__exception.InnerException ?? __exception).Message}");
-            }
-
-            return null;
-        }
-    }
-
-    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Show")]
     internal static class PauseShowOverridePatch
     {
         private static bool Prefix(Core.GameplayUI_PauseMenu __instance)
@@ -490,79 +476,6 @@ internal static class Patches
         }
     }
 
-    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Update")]
-    internal static class PauseUpdateTracePatch
-    {
-        private static System.Exception Finalizer(System.Exception __exception)
-        {
-            if (__exception != null && _reported++ < 2)
-            {
-                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] PauseMenu.Update: {(__exception.InnerException ?? __exception).Message}");
-            }
-
-            return null;
-        }
-
-        private static int _reported;
-    }
-
-    [HarmonyPatch(typeof(GameplayInterface.GameplayUI_UserFace), "Update")]
-    internal static class UserFaceUpdateTracePatch
-    {
-        private static System.Exception Finalizer(System.Exception __exception)
-        {
-            if (__exception != null && _reported++ < 2)
-            {
-                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] UserFace.Update: {(__exception.InnerException ?? __exception).Message}");
-            }
-
-            return null;
-        }
-
-        private static int _reported;
-    }
-
-    [HarmonyPatch(typeof(Il2CppInterop.Runtime.Il2CppException), MethodType.Constructor)]
-    internal static class Il2CppExceptionCtorPatch
-    {
-        private static void Postfix(Il2CppInterop.Runtime.Il2CppException __instance)
-        {
-            if (_reported < 3 && __instance.Message.IndexOf("NullReference", System.StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                _reported++;
-                VersusPlugin.Log.LogWarning($"[IL2CPP-NRE] {new System.Diagnostics.StackTrace()}");
-            }
-        }
-
-        private static int _reported;
-    }
-
-    [HarmonyPatch(typeof(UnityEngine.Transform), "Find", new[] { typeof(string) })]
-    internal static class TransformFindTracePatch
-    {
-        private static void Postfix(string name, UnityEngine.Transform __result)
-        {
-            if (__result == null && !string.IsNullOrEmpty(name) &&
-                name.IndexOf("Quit", System.StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                VersusPlugin.Log.LogWarning($"[FIND-SOURCE] '{name}' -> null\n{new System.Diagnostics.StackTrace()}");
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(UnityEngine.Debug), "LogWarning", new[] { typeof(object) })]
-    internal static class DebugWarnTracePatch
-    {
-        private static void Prefix(object message)
-        {
-            var s = message?.ToString() ?? string.Empty;
-            if (s.IndexOf("Could not find the child", System.StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                VersusPlugin.Log.LogWarning($"[WARN-SOURCE] {s}\n{new System.Diagnostics.StackTrace()}");
-            }
-        }
-    }
-
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Hide")]
     internal static class PauseHideGuardPatch
     {
@@ -571,34 +484,6 @@ internal static class Patches
             // The game's UI controller re-hides the panel every frame; keep it up
             // while our pause state is active so the native buttons stay visible.
             return !LocalSessionProbe.Paused;
-        }
-    }
-
-    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Initialize")]
-    internal static class PauseInitTracePatch
-    {
-        private static System.Exception Finalizer(System.Exception __exception)
-        {
-            if (__exception != null)
-            {
-                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] PauseMenu.Initialize: {(__exception.InnerException ?? __exception).Message}");
-            }
-
-            return null;
-        }
-    }
-
-    [HarmonyPatch(typeof(Gameplay.GameplayMultiplayerManager), "Start")]
-    internal static class GmmStartTracePatch
-    {
-        private static System.Exception Finalizer(System.Exception __exception)
-        {
-            if (__exception != null)
-            {
-                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] GameplayMultiplayerManager.Start: {(__exception.InnerException ?? __exception).Message}");
-            }
-
-            return null;
         }
     }
 

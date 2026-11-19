@@ -1828,18 +1828,16 @@ internal static class LocalSessionProbe
     {
         try
         {
-            // Unity's Input System does not deliver Escape in the attached run, so
-            // read the OS key state directly (VK_ESCAPE = 0x1B, high bit = down).
+            // Single source of truth: the OS key state with a clean press/release edge.
+            // Using Unity's Input System edge as well double-toggled on one key press.
             var pressed = (GetAsyncKeyState(0x1B) & 0x8000) != 0;
-            var keyboard = UnityEngine.InputSystem.Keyboard.current;
-            var edge = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
-            if (!edge && !pressed)
+            if (!pressed)
             {
                 _escHeld = false;
                 return;
             }
 
-            if (_escHeld && !edge)
+            if (_escHeld)
             {
                 return;
             }
@@ -1908,6 +1906,7 @@ internal static class LocalSessionProbe
 
     private static UnityEngine.GameObject _pauseOverlay;
     private static bool _paused;
+    private static bool _pauseInitialized;
 
     private static void EnsurePauseOverlay()
     {
@@ -2006,10 +2005,13 @@ internal static class LocalSessionProbe
 
     public static void TogglePause()
     {
-        // First try the game's native pause menu. Its Show() throws partway through
-        // in the attached run (finalizer swallows it), so afterwards force the child
-        // panels and CanvasGroups that Show() never got to activate.
-        TryNativePause();
+        var opening = !_paused;
+        // Only invoke the native Show path when opening. Calling it while resuming
+        // re-activated the panel right before we hid it, causing a visible flicker.
+        if (opening)
+        {
+            TryNativePause();
+        }
 
         var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
         var menu = all != null && all.Length > 0 ? all[0] : null;
@@ -2017,7 +2019,7 @@ internal static class LocalSessionProbe
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Static);
         var on = _paused;
-        if (menu != null && !on)
+        if (menu != null && opening)
         {
             // Show() throws before activating the button hierarchy. Activate the
             // main panel and its children only - activating every child also brings
@@ -2167,19 +2169,22 @@ internal static class LocalSessionProbe
                 return;
             }
 
-            // Ensure the pause menu's Initialize() ran - scene init can NRE offline
-            // and leave its buttons unwired.
-            var init = typeof(Core.GameplayUI_PauseMenu).GetMethod("Initialize",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
-            try
+            // Initialize() only needs to run once - re-running it on every toggle is
+            // what caused the visible hitch when opening the menu.
+            if (!_pauseInitialized)
             {
-                init?.Invoke(menu, null);
-                VersusPlugin.Log.LogInfo("native-pause: Initialize invoked");
-            }
-            catch (Exception ie)
-            {
-                VersusPlugin.Log.LogWarning($"native-pause: Initialize threw {(ie.InnerException ?? ie).Message}");
+                _pauseInitialized = true;
+                var init = typeof(Core.GameplayUI_PauseMenu).GetMethod("Initialize",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance);
+                try
+                {
+                    init?.Invoke(menu, null);
+                }
+                catch (Exception ie)
+                {
+                    VersusPlugin.Log.LogWarning($"native-pause: Initialize threw {(ie.InnerException ?? ie).Message}");
+                }
             }
 
             // Call the base UISubController.Show() directly: the override's
