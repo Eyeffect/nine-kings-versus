@@ -87,6 +87,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.ProbeUiGetters();
         }
 
+        var clickPerks = System.IO.Path.Combine(VersusPlugin.DataDir, "click-perks");
+        if (System.IO.File.Exists(clickPerks))
+        {
+            System.IO.File.Delete(clickPerks);
+            LocalSessionProbe.ClickPauseButton("PerksBtn");
+        }
+
         var clickOptions = System.IO.Path.Combine(VersusPlugin.DataDir, "click-options");
         if (System.IO.File.Exists(clickOptions))
         {

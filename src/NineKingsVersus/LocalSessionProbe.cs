@@ -2051,6 +2051,29 @@ internal static class LocalSessionProbe
 
     public static bool Paused => _paused;
 
+    // Set by the pause menu's own "open another panel" button handlers so the
+    // Hide guard lets the game switch from the pause menu to Perks/Compendium/etc.
+    public static bool AllowPauseHide;
+
+    public static void HidePausePanel()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+            if (all != null)
+            {
+                foreach (var menu in all)
+                {
+                    if (menu != null) menu.gameObject.SetActive(false);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"hide pause panel failed: {e.Message}");
+        }
+    }
+
     public static void TogglePause()
     {
         var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();

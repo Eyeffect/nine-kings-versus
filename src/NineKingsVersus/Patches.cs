@@ -410,6 +410,10 @@ internal static class Patches
     {
         private static bool Prefix(Core.GameplayUI_PauseMenu __instance)
         {
+            // Pause menu is being shown again after a sub-panel closed - restore the
+            // guard so idle UI updates cannot hide it.
+            LocalSessionProbe.AllowPauseHide = false;
+
             // The native Show() NREs offline on hub-only state. Do the essential
             // panel activation here and skip the original entirely.
             var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
@@ -499,8 +503,42 @@ internal static class Patches
     {
         private static bool Prefix()
         {
-            return !LocalSessionProbe.Paused;
+            return !LocalSessionProbe.Paused || LocalSessionProbe.AllowPauseHide;
         }
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "PerksBtn_Click")]
+    internal static class PerksBtnPatch
+    {
+        private static void Prefix() => LocalSessionProbe.AllowPauseHide = true;
+
+        private static void Postfix()
+        {
+            // The native Hide() goes through the vtable; make sure the pause panel
+            // is actually gone so the Perks screen is not blocked by it.
+            LocalSessionProbe.HidePausePanel();
+        }
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "CompendiumBtn_Click")]
+    internal static class CompendiumBtnPatch
+    {
+        private static void Prefix() => LocalSessionProbe.AllowPauseHide = true;
+        private static void Postfix() => LocalSessionProbe.HidePausePanel();
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "MissionButton_Click")]
+    internal static class MissionBtnPatch
+    {
+        private static void Prefix() => LocalSessionProbe.AllowPauseHide = true;
+        private static void Postfix() => LocalSessionProbe.HidePausePanel();
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "OnOptionsBtn")]
+    internal static class OptionsBtnPatch
+    {
+        private static void Prefix() => LocalSessionProbe.AllowPauseHide = true;
+        // Settings stays inside the pause panel tree, so do not hide it here.
     }
 
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "OnResumeBtn")]
