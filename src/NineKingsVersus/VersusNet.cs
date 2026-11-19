@@ -239,6 +239,26 @@ internal static class VersusNet
         Send(new Message { type = "sync", wave = wave });
     }
 
+    /// <summary>Clears per-match handshake/result state for a rematch (transport untouched).</summary>
+    public static void ResetMatchState()
+    {
+        ResultLoser = -1;
+        PeerEliminatedWave = -1;
+        PeerReadyWave = -1;
+        GoWave = -1;
+        HostWave = -1;
+        OpponentWave = -1;
+        OpponentSnapshotJson = null;
+        lock (Lock)
+        {
+            _incomingLoser = -1;
+            _incomingEliminated = -1;
+            _incomingReadyWave = -1;
+            _incomingGoWave = -1;
+            _incomingHostWave = -1;
+        }
+    }
+
     public static void Stop()
     {
         _running = false;

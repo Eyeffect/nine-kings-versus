@@ -64,11 +64,12 @@ Press **Ctrl+Alt+F11** or click the **VERSUS** button to open the menu.
 ## Known issues
 
 - Only loopback two-process tests have been run; a real two-PC LAN test is still
-  needed.
-- Combat in true multiplayer mode can be unstable: entity counts fluctuate and
-  waves may advance before the result lands.
-- The result is usually decided by the first life loss rather than total army
-  destruction; elimination detection exists but rarely triggers first.
+  needed. A two-process test now reaches a shared result with official end screens
+  on both copies (`timeout decision ... loser=join` → `OnCompleteGame`).
+- The attached session's combat can stall (constant entity counts, no life loss).
+  Waves are frozen once combat engages so neither peer can advance alone, and the
+  host decides after an 18 s grace period if no life was lost (fewer lives loses;
+  exact tie goes to the host). Army-elimination results are not yet achieved.
 - The two local copies share the same `LocalLow` settings folder, causing
   save-file conflicts; end-screen calls have a retry.
 - `GameplayUI_MultiplayerScreen.PopulateEnemyFaces` (the original avatar widget)

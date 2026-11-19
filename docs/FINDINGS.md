@@ -302,3 +302,24 @@ Created branch `clean-arena` and rebuilt the spawner from first principles:
 Conclusion: there is no exposed offline path that constructs a controllable enemy army with working AI. The clean branch confirms the earlier finding. No further hook-based iteration is worthwhile.
 
 Recommendation: archive the milestone; a real implementation needs a custom combat scene/engine built outside the shipped Gameplay flow.
+
+## Two-process loopback: verified result flow (2026-11-19)
+
+Two disposable copies (`local\testgame` host, `local\testgame2` join) were launched together over loopback TCP (port 28764) with `menu-start-host` / `menu-start-join`. Verified in both logs:
+
+- Both connect, load the hub, attach the session and reach Gameplay (`load-run ... returned True`, `scene changed: Gameplay`).
+- Ready/go handshake and continuous snapshot exchange (`net: peer ready`, `net: peer says go`, `net: received opponent state`); each side rebuilds the other's board (`enemyTroops`, `enemyBig`, map active).
+- Both start combat through the official `GameplayUI_PlacingView.StartBattle` twice (first stages/spawns, second engages) plus `Wave.StartCombat`, with `WaitingForEnemiesToSpawn=false` set to avoid the coroutine stall.
+- A single shared result is decided by the host and applied on both: `match-result: timeout decision ... loser=join` → `applying victory on host` / `applying defeat on join` → `OnCompleteGame(Victory)` / `OnCompleteGame(Defeat)` (official end UI). Waves are frozen after the result (`SetWave`/`CompleteWave`/`StartWave` blocked).
+
+### Fixes proven by this test
+- **Menu spam:** `TryInstallMainMenuButton` used `GameObject.Find("VersusBtn")`, which ignores the button when the main-menu holder is deactivated; it re-cloned every frame (~299k log lines in 35 s). Now holds the clone in a static field: 1 clone, ~150 log lines per run.
+- **Menu match never started:** `StartVersusMatch` only wrote `net.json`; it now also writes `auto-versus` + `multi-bot` and resets match state. Without these flags `AutoVersusStep`/`MatchResultStep` never ran.
+- **Asymmetric handshake:** the join waited for a separate ready echo and fought a wave behind the host; `go` is now authoritative for the join.
+- **Wave desync:** once combat engages, `ResultPending()` freezes `SetWave`/`CompleteWave`/`StartWave` so a peer cannot auto-advance and leave the other fighting alone.
+- **Combat stall:** `StartBattle` sets `WaitingForEnemiesToSpawn=true` after `SpawnWave` already ran in the attached run; explicitly clearing it lets `CombatOn` go true.
+
+### Honest limitations
+- The attached session's combat simulation stalls: entity counts stay constant and no life is lost. The result therefore comes from the host's 18 s timeout decision (fewer lives loses; exact tie → host), not from units actually killing each other. Real army-elimination results are still not achieved.
+- Perk loadout is still only stored, not applied.
+- Only loopback two-process tests have run; no true two-PC LAN validation yet.

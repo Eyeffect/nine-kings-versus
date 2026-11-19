@@ -37,6 +37,8 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static bool _autoStarted;
     private static bool _resultHandled;
     private static int _localEliminatedWave = -1;
+    private static float _combatSince = -1f;
+    private static int _combatSinceWave = -1;
     private static int _verifySamples;
     private float _autoAt = -1f;
     private static float _attachRetryAt = -1f;
@@ -291,7 +293,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
             && Time.time >= _syncAt && !_resultHandled)
         {
-            _syncAt = Time.time + 5f;
+            _syncAt = Time.time + 1.5f;
             var waveNow = Core.Wave.Data.Wave;
             if (VersusNet.Mode == "host")
             {
@@ -442,6 +444,13 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             System.IO.File.Delete(menuStart);
             StartVersusMatch("host");
+        }
+
+        var menuStartJoin = System.IO.Path.Combine(VersusPlugin.DataDir, "menu-start-join");
+        if (_lastScene == "MainMenu" && System.IO.File.Exists(menuStartJoin))
+        {
+            System.IO.File.Delete(menuStartJoin);
+            StartVersusMatch("join");
         }
 
         var attachFlow = System.IO.Path.Combine(VersusPlugin.DataDir, "attach-flow");
@@ -702,9 +711,17 @@ public sealed class VersusBehaviour : MonoBehaviour
                 method?.Invoke(view, null);
                 data?.SetWaitingToBegin(false);
                 data?.SetRunning(true);
+                // StartBattle sets WaitingForEnemiesToSpawn=true to make the game
+                // spawn the wave, but SpawnWave has already run in our attached run,
+                // so nothing clears it and the combat coroutine waits forever.
+                if (data != null)
+                {
+                    data.WaitingForEnemiesToSpawn = false;
+                }
+
                 Core.Wave.StartCombat(false);
                 VersusPlugin.Log.LogInfo($"start-battle2: after running={data?.Running} combatOn={data?.CombatOn} " +
-                    $"waitingToBegin={data?.WaitingToBegin}");
+                    $"waitingToBegin={data?.WaitingToBegin} waitingForEnemies={data?.waitingForEnemiesToSpawn}");
                 ScheduleVerification(8);
             }
             catch (Exception e)
@@ -1305,7 +1322,10 @@ public sealed class VersusBehaviour : MonoBehaviour
             method?.Invoke(view, null);
             VersusPlugin.Log.LogInfo($"{reason}: StartBattle invoked (method={method != null}); " +
                 $"running={data?.Running} combatOn={data?.CombatOn} waitingToBegin={data?.WaitingToBegin} cards={hand?.CardsCount.ToString() ?? "n/a"}");
-            _secondBattleAt = Time.time + 8f;
+            // The game's own notes show StartBattle must be pressed twice: the
+            // first stages/spawns, the second actually engages combat. Keep the
+            // gap short so the game cannot auto-complete the wave in between.
+            _secondBattleAt = Time.time + 0.6f;
             ScheduleVerification(10);
         }
         catch (Exception e)
@@ -1346,20 +1366,34 @@ public sealed class VersusBehaviour : MonoBehaviour
             VersusNet.SendReady(wave);
         }
 
-        if (VersusNet.PeerReadyWave != wave || VersusNet.StateVersion < 1)
+        // The host gates on the peer's ready, then sends `go`. The join treats
+        // `go` as authoritative and does not wait for a separate ready echo:
+        // requiring it made the join miss the host's wave and fight one behind,
+        // so the life comparison rewarded the idle side.
+        bool shouldStart;
+        if (VersusNet.Mode == "host")
         {
-            return;
-        }
+            if (VersusNet.PeerReadyWave != wave || VersusNet.StateVersion < 1)
+            {
+                return;
+            }
 
-        if (VersusNet.Mode == "host" && !_goSent)
+            if (!_goSent)
+            {
+                _goSent = true;
+                VersusNet.SendGo(wave);
+            }
+
+            shouldStart = _goSent;
+        }
+        else
         {
-            _goSent = true;
-            VersusNet.SendGo(wave);
+            // The join can load one wave ahead of the host (the attached run's
+            // snapshot series advances on attach). Start on any go rather than
+            // requiring an exact wave match; ResultPending freezes the wave once
+            // combat engages, so both peers then settle on their current wave.
+            shouldStart = VersusNet.GoWave > 0 && VersusNet.StateVersion > 0;
         }
-
-        var shouldStart = VersusNet.Mode == "host"
-            ? _goSent
-            : VersusNet.GoWave == wave && VersusNet.StateVersion > 0;
 
         if (shouldStart && !_autoStarted)
         {
@@ -1430,28 +1464,31 @@ public sealed class VersusBehaviour : MonoBehaviour
                 return;
             }
 
-            if (false && VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
-                VersusNet.PeerReadyWave == wave &&
-                !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
+            var combatOn = Core.Wave.Data?.CombatOn ?? false;
+            if (combatOn && _combatSinceWave != wave)
             {
-                var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
-                Array.Sort(files, StringComparer.Ordinal);
-                if (files.Length > 0)
-                {
-                    var mine = SnapshotStrength(File.ReadAllText(files[^1]));
-                    var theirs = SnapshotStrength(VersusNet.OpponentSnapshotJson);
-                    if (mine > 0 && theirs > 0 && Math.Abs(mine - theirs) > 1f)
-                    {
-                        var loser = mine < theirs ? 0 : 1;
-                        _resultHandled = true;
-                        VersusPlugin.Log.LogInfo(
-                            $"match-result: strength decision host={mine:F0} join={theirs:F0} " +
-                            $"loser={(loser == 0 ? "host" : "join")}");
-                        VersusNet.SendResult(loser);
-                        ApplyMatchResult(loser);
-                        return;
-                    }
-                }
+                _combatSinceWave = wave;
+                _combatSince = Time.time;
+            }
+
+            // Fallback result: an attached session's combat can stall with no life
+            // change, so the life-based decision never fires. After a grace period
+            // the host decides: fewer lives loses; an exact tie falls to the host
+            // (a deterministic tiebreak both peers share). If real combat resolves
+            // lives first, the normal decision below takes priority.
+            if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
+                VersusNet.StateVersion > 0 && VersusNet.PeerReadyWave > 0 &&
+                !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson) &&
+                _combatSince > 0f && Time.time - _combatSince >= 18f)
+            {
+                var loser = (myLives >= 0 && peerLives >= 0 && myLives < peerLives) ? 0 : 1;
+                _resultHandled = true;
+                VersusPlugin.Log.LogInfo(
+                    $"match-result: timeout decision hostLives={myLives} joinLives={peerLives} " +
+                    $"loser={(loser == 0 ? "host" : "join")}");
+                VersusNet.SendResult(loser);
+                ApplyMatchResult(loser);
+                return;
             }
 
             if (VersusNet.Mode == "host")
@@ -1475,6 +1512,25 @@ public sealed class VersusBehaviour : MonoBehaviour
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"match-result failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private static string LatestLocalSnapshot()
+    {
+        try
+        {
+            var files = Directory.GetFiles(VersusPlugin.DataDir, "*-wave-start-*.json");
+            if (files.Length == 0)
+            {
+                files = Directory.GetFiles(VersusPlugin.DataDir, "*-capture-*.json");
+            }
+
+            Array.Sort(files, StringComparer.Ordinal);
+            return files.Length > 0 ? File.ReadAllText(files[^1]) : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -1613,6 +1669,16 @@ public sealed class VersusBehaviour : MonoBehaviour
             }
 
             File.WriteAllText(path, $"{{\"mode\":\"{mode}\",\"peer\":\"{peer}\",\"port\":{port}}}");
+
+            // A match started from the native menu needs the same flags the tested
+            // loopback flow used: auto-versus drives the ready/go handshake, the
+            // synced Start Battle, and the shared result; multi-bot gives the
+            // opponent king a real army/base. Without these the run loads but no
+            // battle ever starts and no result is ever computed.
+            ApplyMatchFlag("auto-versus");
+            ApplyMatchFlag("multi-bot");
+            ResetMatchState();
+
             _attachFlowPending = true;
             VersusPlugin.Log.LogInfo($"menu: starting versus match as {mode}");
             if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "MainMenu")
@@ -1626,9 +1692,48 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
     }
 
+    private static void ApplyMatchFlag(string name)
+    {
+        try
+        {
+            var path = Path.Combine(VersusPlugin.DataDir, name);
+            if (!File.Exists(path))
+            {
+                File.WriteAllText(path, "1");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"match flag {name} failed: {e.Message}");
+        }
+    }
+
+    /// <summary>Clears per-match state so a rematch cannot inherit a decided result.</summary>
+    public static void ResetMatchState()
+    {
+        _resultHandled = false;
+        _localEliminatedWave = -1;
+        _handshakeWave = -1;
+        _readySent = false;
+        _goSent = false;
+        _autoStarted = false;
+        _lastSyncedTo = -1;
+        _arenaLocalWave = -1;
+        _pendingEndType = null;
+        _endRetryAt = -1f;
+        _endRetryCount = 0;
+        _combatSince = -1f;
+        _combatSinceWave = -1;
+        VersusNet.ResetMatchState();
+    }
+
     public static bool ResultPending()
     {
-        return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0;
+        // Freeze the wave once combat has engaged: an undecided peer auto-advancing
+        // to the next wave desynchronises the handshake and makes the other side
+        // fight alone, which produced unfair life-based results.
+        return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0 ||
+               _combatSince > 0f;
     }
 
     public static bool ClaimStartWave()
@@ -1640,9 +1745,9 @@ public sealed class VersusBehaviour : MonoBehaviour
             return true;
         }
 
-        if (_resultHandled)
+        if (_resultHandled || _combatSince > 0f)
         {
-            VersusPlugin.Log.LogWarning("StartWave blocked: match result already decided");
+            VersusPlugin.Log.LogWarning("StartWave blocked: combat engaged, wave frozen until result");
             return false;
         }
 

@@ -17,6 +17,7 @@ internal static class VersusNativeMenu
     private const float PanelH = 560f;
 
     private static GameObject _root;
+    private static GameObject _versusButton;
     private static TMP_Text _status;
     private static TMP_Text _network;
     private static TMP_Text _options;
@@ -37,7 +38,10 @@ internal static class VersusNativeMenu
     {
         try
         {
-            if (GameObject.Find("VersusBtn") != null)
+            // Hold the clone directly: GameObject.Find ignores inactive objects, and the
+            // main-menu holder is deactivated whenever the native versus panel is open.
+            // Relying on Find here re-cloned the button (and spammed the log) every frame.
+            if (_versusButton != null)
             {
                 return;
             }
@@ -50,6 +54,7 @@ internal static class VersusNativeMenu
 
             var clone = UnityEngine.Object.Instantiate(start, start.transform.parent);
             clone.name = "VersusBtn";
+            _versusButton = clone;
             VersusPlugin.Log.LogInfo("menu-button: cloned start button");
 
             var tmp = clone.GetComponentInChildren<TMPro.TMP_Text>();
