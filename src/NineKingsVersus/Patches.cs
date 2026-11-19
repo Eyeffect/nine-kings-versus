@@ -438,10 +438,30 @@ internal static class Patches
             var holder = type.GetField("m_HolderGroup", flags)?.GetValue(__instance) as UnityEngine.CanvasGroup;
             if (holder != null)
             {
+                VersusPlugin.Log.LogWarning($"PauseShow: holder path={HolderPath(holder.transform)}");
                 holder.gameObject.SetActive(true);
                 holder.alpha = 1f;
                 holder.interactable = true;
                 holder.blocksRaycasts = true;
+            }
+
+            // Activate the top-level Holder child of the Canvas directly - that is
+            // the container the buttons actually live under.
+            var canvas = __instance.GetComponentInChildren<UnityEngine.Canvas>(true);
+            if (canvas != null)
+            {
+                var topHolder = canvas.transform.Find("Holder");
+                if (topHolder != null)
+                {
+                    topHolder.gameObject.SetActive(true);
+                    var cg = topHolder.GetComponent<UnityEngine.CanvasGroup>();
+                    if (cg != null)
+                    {
+                        cg.alpha = 1f;
+                        cg.interactable = true;
+                        cg.blocksRaycasts = true;
+                    }
+                }
             }
 
             var main = type.GetField("m_MainPanel", flags)?.GetValue(__instance) as UnityEngine.GameObject;
@@ -468,6 +488,120 @@ internal static class Patches
             VersusPlugin.Log.LogInfo("PauseMenu.Show replaced: hub state bypassed, panels activated");
             return false;
         }
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Update")]
+    internal static class PauseUpdateTracePatch
+    {
+        private static System.Exception Finalizer(System.Exception __exception)
+        {
+            if (__exception != null && _reported++ < 2)
+            {
+                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] PauseMenu.Update: {(__exception.InnerException ?? __exception).Message}");
+            }
+
+            return null;
+        }
+
+        private static int _reported;
+    }
+
+    [HarmonyPatch(typeof(GameplayInterface.GameplayUI_UserFace), "Update")]
+    internal static class UserFaceUpdateTracePatch
+    {
+        private static System.Exception Finalizer(System.Exception __exception)
+        {
+            if (__exception != null && _reported++ < 2)
+            {
+                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] UserFace.Update: {(__exception.InnerException ?? __exception).Message}");
+            }
+
+            return null;
+        }
+
+        private static int _reported;
+    }
+
+    [HarmonyPatch(typeof(Il2CppInterop.Runtime.Il2CppException), MethodType.Constructor)]
+    internal static class Il2CppExceptionCtorPatch
+    {
+        private static void Postfix(Il2CppInterop.Runtime.Il2CppException __instance)
+        {
+            if (_reported < 3 && __instance.Message.IndexOf("NullReference", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                _reported++;
+                VersusPlugin.Log.LogWarning($"[IL2CPP-NRE] {new System.Diagnostics.StackTrace()}");
+            }
+        }
+
+        private static int _reported;
+    }
+
+    [HarmonyPatch(typeof(UnityEngine.Transform), "Find", new[] { typeof(string) })]
+    internal static class TransformFindTracePatch
+    {
+        private static void Postfix(string name, UnityEngine.Transform __result)
+        {
+            if (__result == null && !string.IsNullOrEmpty(name) &&
+                name.IndexOf("Quit", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                VersusPlugin.Log.LogWarning($"[FIND-SOURCE] '{name}' -> null\n{new System.Diagnostics.StackTrace()}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(UnityEngine.Debug), "LogWarning", new[] { typeof(object) })]
+    internal static class DebugWarnTracePatch
+    {
+        private static void Prefix(object message)
+        {
+            var s = message?.ToString() ?? string.Empty;
+            if (s.IndexOf("Could not find the child", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                VersusPlugin.Log.LogWarning($"[WARN-SOURCE] {s}\n{new System.Diagnostics.StackTrace()}");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Initialize")]
+    internal static class PauseInitTracePatch
+    {
+        private static System.Exception Finalizer(System.Exception __exception)
+        {
+            if (__exception != null)
+            {
+                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] PauseMenu.Initialize: {(__exception.InnerException ?? __exception).Message}");
+            }
+
+            return null;
+        }
+    }
+
+    [HarmonyPatch(typeof(Gameplay.GameplayMultiplayerManager), "Start")]
+    internal static class GmmStartTracePatch
+    {
+        private static System.Exception Finalizer(System.Exception __exception)
+        {
+            if (__exception != null)
+            {
+                VersusPlugin.Log.LogWarning($"[NRE-SOURCE] GameplayMultiplayerManager.Start: {(__exception.InnerException ?? __exception).Message}");
+            }
+
+            return null;
+        }
+    }
+
+    private static string HolderPath(UnityEngine.Transform t)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        while (t != null)
+        {
+            parts.Add(t.name);
+            t = t.parent;
+        }
+
+        parts.Reverse();
+        return string.Join("/", parts);
     }
 
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "CanOpenPauseMenu")]

@@ -94,6 +94,14 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.DumpPauseHierarchy();
         }
 
+        var testTimescale = System.IO.Path.Combine(VersusPlugin.DataDir, "test-timescale");
+        if (System.IO.File.Exists(testTimescale))
+        {
+            System.IO.File.Delete(testTimescale);
+            UnityEngine.Time.timeScale = UnityEngine.Time.timeScale == 0f ? 1f : 0f;
+            VersusPlugin.Log.LogInfo($"test-timescale: scale={UnityEngine.Time.timeScale}");
+        }
+
         var nativeEscape = System.IO.Path.Combine(VersusPlugin.DataDir, "test-escape-native");
         if (System.IO.File.Exists(nativeEscape))
         {
