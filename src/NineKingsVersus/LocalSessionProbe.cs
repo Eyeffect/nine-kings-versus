@@ -1826,14 +1826,15 @@ internal static class LocalSessionProbe
         try
         {
             var keyboard = UnityEngine.InputSystem.Keyboard.current;
-            var down = keyboard != null && keyboard.escapeKey.wasPressedThisFrame;
-            if (!down || _escHeld)
+            var pressed = keyboard != null && keyboard.escapeKey.isPressed;
+            if (!pressed)
             {
-                if (!down)
-                {
-                    _escHeld = false;
-                }
+                _escHeld = false;
+                return;
+            }
 
+            if (_escHeld)
+            {
                 return;
             }
 
@@ -1844,6 +1845,19 @@ internal static class LocalSessionProbe
         {
             VersusPlugin.Log.LogWarning($"escape key failed: {e.Message}");
         }
+    }
+
+    private static string PathOf(UnityEngine.Transform t)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        while (t != null)
+        {
+            parts.Add(t.name);
+            t = t.parent;
+        }
+
+        parts.Reverse();
+        return string.Join("/", parts);
     }
 
     public static void TogglePause()
@@ -1865,15 +1879,85 @@ internal static class LocalSessionProbe
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                 System.Reflection.BindingFlags.Static);
             var on = stateProp != null && stateProp.GetValue(null) is bool b && b;
+            var path = PathOf(menu.transform);
+            var parentActive = menu.transform.parent != null && menu.transform.parent.gameObject.activeInHierarchy;
+            VersusPlugin.Log.LogInfo($"escape: menu path={path} self={menu.gameObject.activeSelf} parentActive={parentActive} on={on}");
+
+            // Make sure the whole hierarchy is active before showing.
+            var t = menu.transform;
+            while (t != null)
+            {
+                if (!t.gameObject.activeSelf)
+                {
+                    t.gameObject.SetActive(true);
+                }
+
+                t = t.parent;
+            }
+
             menu.gameObject.SetActive(!on);
+
+            if (!on)
+            {
+                var groups = menu.GetComponentsInChildren<UnityEngine.CanvasGroup>(true);
+                if (groups != null)
+                {
+                    foreach (var g in groups)
+                    {
+                        g.alpha = 1f;
+                        g.interactable = true;
+                        g.blocksRaycasts = true;
+                    }
+                }
+
+                var mainField = typeof(Core.GameplayUI_PauseMenu).GetField("m_MainPanel",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance);
+                var mainPanel = mainField?.GetValue(menu) as UnityEngine.GameObject;
+                if (mainPanel != null)
+                {
+                    mainPanel.SetActive(true);
+                }
+            }
+
             stateProp?.SetValue(null, !on);
             UnityEngine.Time.timeScale = on ? 1f : 0f;
-            VersusPlugin.Log.LogInfo($"escape: pause toggled on={!on}");
+            VersusPlugin.Log.LogInfo($"escape: pause toggled on={!on} active={menu.gameObject.activeInHierarchy}");
         }
         catch (Exception e)
         {
             var inner = e.InnerException ?? e;
             VersusPlugin.Log.LogWarning($"escape failed: {inner.GetType().Name}: {inner.Message}\n{inner}");
+        }
+    }
+
+    /// <summary>
+    /// Displays the three enemy-king cards (GameplayUI_EnemyShowcase) as the match
+    /// intro. PumpEnemyShowcase dismisses it after a short delay so it never blocks
+    /// input. No year/cutscene panel is involved.
+    /// </summary>
+    public static void ShowEnemyReveal()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_EnemyShowcase>();
+            var showcase = all != null && all.Length > 0 ? all[0] : null;
+            if (showcase == null)
+            {
+                VersusPlugin.Log.LogWarning("reveal: EnemyShowcase not found");
+                return;
+            }
+
+            var type = typeof(GameplayInterface.GameplayUI_EnemyShowcase);
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+            type.GetMethod("Initialize", flags)?.Invoke(showcase, null);
+            type.GetMethod("Show", flags)?.Invoke(showcase, null);
+            VersusPlugin.Log.LogInfo("reveal: EnemyShowcase Initialize+Show invoked");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"reveal failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
         }
     }
 
