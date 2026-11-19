@@ -2031,31 +2031,39 @@ internal static class LocalSessionProbe
     {
         var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
         var menu = all != null && all.Length > 0 ? all[0] : null;
-        var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Instance;
-
-        // If a sub-panel (Options/Forfeit/Quit) is open, Escape goes back to the
-        // main pause panel instead of closing the whole menu.
-        if (_paused && menu != null)
+        if (menu == null)
         {
-            var subNames = new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure" };
-            foreach (var subName in subNames)
+            VersusPlugin.Log.LogWarning("escape: pause menu not found");
+            return;
+        }
+
+        // Decide from the ACTUAL panel state, not our flag. The game can close or
+        // switch pause variants on its own (e.g. the wishlist build), and a stale
+        // flag then opens the background with no buttons.
+        var holder = FindChildByName(menu.transform, "Holder");
+        var visible = menu.gameObject.activeInHierarchy && holder != null && holder.activeInHierarchy;
+
+        // If a sub-panel (Options/Forfeit/Quit/wishlist) is open, Escape goes back
+        // to the main pause panel instead of closing the whole menu.
+        var mainShown = FindChildByName(menu.transform, "Main");
+        if (_paused && visible && (mainShown == null || !mainShown.activeInHierarchy))
+        {
+            foreach (var subName in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn" })
             {
                 var sub = FindChildByName(menu.transform, subName);
                 if (sub != null && sub.activeSelf)
                 {
                     sub.SetActive(false);
-                    var mainBack = FindChildByName(menu.transform, "Main");
-                    if (mainBack != null) ActivateAll(mainBack.transform);
+                    if (mainShown != null) ActivateAll(mainShown.transform);
+                    _paused = true;
+                    UnityEngine.Time.timeScale = 0f;
                     VersusPlugin.Log.LogInfo($"escape: backed out of {subName} to main pause");
                     return;
                 }
             }
         }
 
-        var opening = !_paused;
-        // Only invoke the native Show path when opening. Calling it while resuming
-        // re-activated the panel right before we hid it, causing a visible flicker.
+        var opening = !visible;
         if (opening)
         {
             TryNativePause();
@@ -2064,36 +2072,20 @@ internal static class LocalSessionProbe
         var stateProp = typeof(Core.GameplayUI_PauseMenu).GetProperty("PauseMenuOnScreen",
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Static);
-        var on = _paused;
-        if (menu != null && opening)
+        if (opening)
         {
-            // Show() throws before activating the button hierarchy. Activate the
-            // main panel and its children only - activating every child also brings
-            // up the Options/Forfeit/Quit panels layered on top.
-            foreach (var panelName in new[] { "m_OptionsPanel", "m_ForfeitPanel", "m_QuitPanel", "m_ReallyQuitPanel" })
+            // Force the exact hierarchy the native menu uses: top-level Holder and
+            // Main active, every sub-panel and the wishlist variant inactive.
+            foreach (var subName in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn" })
             {
-                var field = typeof(Core.GameplayUI_PauseMenu).GetField(panelName, flags);
-                (field?.GetValue(menu) as UnityEngine.GameObject)?.SetActive(false);
+                var sub = FindChildByName(menu.transform, subName);
+                if (sub != null) sub.SetActive(false);
             }
 
-            // The main container "Holder" (m_HolderGroup) is what Show() normally
-            // activates; without it the GamePaused text and buttons stay hidden.
-            var holderField = typeof(Core.GameplayUI_PauseMenu).GetField("m_HolderGroup", flags);
-            var holderGroup = holderField?.GetValue(menu) as UnityEngine.CanvasGroup;
-            if (holderGroup != null)
-            {
-                holderGroup.gameObject.SetActive(true);
-                holderGroup.alpha = 1f;
-                holderGroup.interactable = true;
-                holderGroup.blocksRaycasts = true;
-            }
-
-            var mainField = typeof(Core.GameplayUI_PauseMenu).GetField("m_MainPanel", flags);
-            var mainPanel = mainField?.GetValue(menu) as UnityEngine.GameObject;
-            if (mainPanel != null)
-            {
-                ActivateAll(mainPanel.transform);
-            }
+            var topHolder = FindChildByName(menu.transform, "Holder");
+            if (topHolder != null) ActivateAll(topHolder.transform);
+            var mainPanel = FindChildByName(menu.transform, "Main");
+            if (mainPanel != null) ActivateAll(mainPanel.transform);
 
             menu.gameObject.SetActive(true);
 
@@ -2107,19 +2099,15 @@ internal static class LocalSessionProbe
                     g.blocksRaycasts = true;
                 }
             }
-
-            var bg = menu.GetComponent<UnityEngine.UI.Image>();
-            if (bg != null) bg.enabled = true;
-            VersusPlugin.Log.LogInfo($"escape: native pause forced active={menu.gameObject.activeInHierarchy}");
         }
-        else if (menu != null)
+        else
         {
             menu.gameObject.SetActive(false);
         }
 
-        _paused = !on;
+        _paused = opening;
         stateProp?.SetValue(null, _paused);
-        UnityEngine.Time.timeScale = on ? 1f : 0f;
+        UnityEngine.Time.timeScale = opening ? 0f : 1f;
         VersusPlugin.Log.LogInfo($"escape: pause toggled on={_paused}");
     }
 
