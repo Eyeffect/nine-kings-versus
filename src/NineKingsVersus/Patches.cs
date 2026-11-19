@@ -493,6 +493,32 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "OnResumeBtn")]
+    internal static class PauseResumePatch
+    {
+        private static void Prefix()
+        {
+            // Clear our pause state before the native handler runs, otherwise the
+            // Hide guard below blocks the Resume button's own Hide() call.
+            if (LocalSessionProbe.Paused)
+            {
+                LocalSessionProbe.TogglePause();
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "OnMenuBtn")]
+    internal static class PauseMenuBtnPatch
+    {
+        private static void Prefix()
+        {
+            if (LocalSessionProbe.Paused)
+            {
+                LocalSessionProbe.TogglePause();
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Hide")]
     internal static class PauseHideGuardPatch
     {

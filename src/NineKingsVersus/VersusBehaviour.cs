@@ -87,6 +87,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.ProbeUiGetters();
         }
 
+        var clickResume = System.IO.Path.Combine(VersusPlugin.DataDir, "click-resume");
+        if (System.IO.File.Exists(clickResume))
+        {
+            System.IO.File.Delete(clickResume);
+            LocalSessionProbe.ClickPauseButton("ResumeBtn");
+        }
+
         var facesCheck = System.IO.Path.Combine(VersusPlugin.DataDir, "faces-check");
         if (System.IO.File.Exists(facesCheck))
         {

@@ -2079,6 +2079,37 @@ internal static class LocalSessionProbe
         VersusPlugin.Log.LogInfo($"escape: pause toggled on={_paused}");
     }
 
+    public static void ClickPauseButton(string name)
+    {
+        try
+        {
+            var menus = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+            var menu = menus != null && menus.Length > 0 ? menus[0] : null;
+            if (menu == null)
+            {
+                VersusPlugin.Log.LogWarning($"pause-click: menu not found ({name})");
+                return;
+            }
+
+            var buttons = menu.GetComponentsInChildren<UnityEngine.UI.Button>(true);
+            foreach (var b in buttons)
+            {
+                if (b.name == name)
+                {
+                    b.onClick.Invoke();
+                    VersusPlugin.Log.LogInfo($"pause-click: invoked {name}");
+                    return;
+                }
+            }
+
+            VersusPlugin.Log.LogWarning($"pause-click: {name} not found");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"pause-click failed: {e.Message}");
+        }
+    }
+
     public static void CheckEnemyFaces()
     {
         try

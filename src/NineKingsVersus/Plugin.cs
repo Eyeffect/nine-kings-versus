@@ -52,6 +52,8 @@ public sealed class VersusPlugin : BasePlugin
             PatchOne(harmony, typeof(Patches.CanOpenPauseMenuPatch));
             PatchOne(harmony, typeof(Patches.PauseShowOverridePatch));
             PatchOne(harmony, typeof(Patches.PauseHideGuardPatch));
+            PatchOne(harmony, typeof(Patches.PauseResumePatch));
+            PatchOne(harmony, typeof(Patches.PauseMenuBtnPatch));
 
             Log.LogInfo("Harmony patches applied");
         }
