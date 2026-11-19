@@ -128,7 +128,8 @@ internal static class Patches
             }
             catch (Exception e)
             {
-                VersusPlugin.Log.LogWarning($"StartWave snapshot dump failed: {e.Message}");
+                VersusPlugin.Log.LogWarning($"StartWave snapshot dump failed: {e.Message}; sending fallback state");
+                SnapshotDump.WriteFallback("wave-start");
             }
         }
     }
@@ -337,6 +338,57 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Gameplay.GameplayMultiplayerManager), "Start")]
+    internal static class GameplayMpStartPatch
+    {
+        private static void Prefix()
+        {
+            var session = MultiplayerSystems.MultiplayerManager.Session;
+            VersusPlugin.Log.LogInfo(
+                $"MP-UI: GameplayMultiplayerManager.Start session={(session == null ? "null" : "set")} " +
+                $"gauntlet={session?.GauntletEnemies?.Count ?? -1} active={session?.GauntletActive.ToString() ?? "n/a"}");
+        }
+
+        private static void Postfix()
+        {
+            var screen = UnityEngine.Object.FindObjectOfType<GameplayInterface.GameplayUI_MultiplayerScreen>();
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_MultiplayerScreen>();
+            VersusPlugin.Log.LogInfo(
+                $"MP-UI: after Start activeScreen={(screen == null ? "null" : "found")} allScreens={all?.Length ?? -1}");
+            if (all != null)
+            {
+                foreach (var s in all)
+                {
+                    VersusPlugin.Log.LogInfo(
+                        $"MP-UI: screen '{s.name}' active={s.gameObject.activeInHierarchy} " +
+                        $"path={GetPath(s.transform)}");
+                }
+            }
+        }
+
+        private static string GetPath(UnityEngine.Transform t)
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            while (t != null)
+            {
+                parts.Add(t.name);
+                t = t.parent;
+            }
+
+            parts.Reverse();
+            return string.Join("/", parts);
+        }
+    }
+
+    [HarmonyPatch(typeof(GameplayInterface.GameplayUI_MultiplayerScreen), "PopulateEnemyFaces")]
+    internal static class PopulateEnemyFacesPatch
+    {
+        private static void Prefix()
+        {
+            VersusPlugin.Log.LogInfo("MP-UI: PopulateEnemyFaces called");
+        }
+    }
+
     [HarmonyPatch(typeof(MultiplayerSystems.MultiplayerManager), nameof(MultiplayerSystems.MultiplayerManager.SubmitMultiplayerRun))]
     internal static class BlockSubmitPatch
     {
@@ -369,10 +421,45 @@ internal static class SnapshotDump
     private static int _counter;
     private static DateTime _lastSent = DateTime.MinValue;
 
+    /// <summary>
+    /// Sends a state built from our own snapshot when the game's CaptureSnapshot
+    /// throws (e.g. CastleBase.GetMaxHP NRE on a freshly loaded wave-0 board).
+    /// Keeps the LAN state exchange alive so the handshake can complete.
+    /// </summary>
+    public static void WriteFallback(string reason)
+    {
+        if (!VersusNet.Connected)
+        {
+            return;
+        }
+
+        try
+        {
+            var snapshot = LocalSessionProbe.BuildFreshSnapshot();
+            var wave = Core.Wave.Data?.Wave ?? 0;
+            var lives = VersusNet.LocalLives >= 0 ? VersusNet.LocalLives : snapshot.WaveData?.PlayerLifes ?? -1;
+            if (snapshot.WaveData != null)
+            {
+                snapshot.WaveData.WaveNumber = wave;
+                snapshot.WaveData.PlayerLifes = lives;
+            }
+
+            var json = Newtonsoft.Json.JsonConvert.SerializeObject(snapshot);
+            VersusNet.SetLocalLives(lives);
+            VersusNet.SendState(wave, json, lives);
+            VersusPlugin.Log.LogInfo($"snapshot fallback ({reason}) wave={wave} bytes={json.Length}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"snapshot fallback ({reason}) failed: {e.Message}");
+        }
+    }
+
     public static void Write(Gameplay.GameSnapshot snapshot, string reason)
     {
         if (snapshot == null)
         {
+            WriteFallback(reason);
             return;
         }
 
@@ -398,7 +485,7 @@ internal static class SnapshotDump
             var lives = snapshot.WaveData?.PlayerLifes ?? -1;
             VersusNet.SetLocalLives(lives);
 
-            if (VersusNet.Connected && wave >= 1 &&
+            if (VersusNet.Connected && wave >= 0 &&
                 (reason == "wave-start" || reason == "capture") &&
                 (DateTime.UtcNow - _lastSent) > TimeSpan.FromSeconds(2))
             {

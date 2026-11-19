@@ -399,28 +399,20 @@ internal static class LocalSessionProbe
         kingName = null;
         try
         {
-            var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
-            Array.Sort(files, StringComparer.Ordinal);
-            if (files.Length == 0)
+            // Start from a fresh year-0 board, not the captured wave-15 run.
+            Gameplay.GameSnapshot snapshot;
+            try
             {
-                VersusPlugin.Log.LogWarning("attach-pre: no captured snapshot available");
+                snapshot = BuildFreshSnapshot();
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"attach-pre: fresh snapshot failed: {e.Message}");
                 return false;
             }
 
-            var snapshot = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(File.ReadAllText(files[^1]));
-            if (snapshot?.Kings == null || snapshot.WaveData == null)
-            {
-                VersusPlugin.Log.LogWarning("attach-pre: snapshot has no king or wave data");
-                return false;
-            }
-
-            kingName = "KingOf" + snapshot.Kings.PlayerKing;
-            if (!Enum.TryParse<Core.CardOwnership>(kingName, out var owner))
-            {
-                VersusPlugin.Log.LogWarning($"attach-pre: unmapped snapshot king {snapshot.Kings.PlayerKing}");
-                return false;
-            }
-
+            ReadChoices(out var chosenId, out _);
+            var owner = chosenId >= 0 ? (Core.CardOwnership)chosenId : Core.CardOwnership.KingOfNothing;
             ApplyChoices(ref owner);
             kingName = owner.ToString();
 
@@ -444,21 +436,28 @@ internal static class LocalSessionProbe
             enemySnapshots.Add(snapshot);
             enemySnapshots.FinalSnapshot = snapshot;
 
-            // The probe run advances one wave after attachment; StartWave appears to look
-            // up the enemy snapshot for the *current* wave, so also register a clone for
-            // the next wave. This is what the real per-wave snapshot series provides.
-            var nextWaveSnapshot = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(
-                Newtonsoft.Json.JsonConvert.SerializeObject(snapshot));
-            if (nextWaveSnapshot?.WaveData != null)
+            // Register a per-wave snapshot series so GetWaveSnapshot resolves at any
+            // wave the match reaches. The official session carries one snapshot per
+            // year; without a long enough series SetWave stalls when the game advances.
+            const int SeriesWaves = 64;
+            for (var wave = snapshot.WaveData.WaveNumber + 1; wave <= SeriesWaves; wave++)
             {
-                nextWaveSnapshot.WaveData.WaveNumber = snapshot.WaveData.WaveNumber + 1;
-                nextWaveSnapshot.WaveData.IsMultiplayer = true;
-                localSnapshots.Add(nextWaveSnapshot);
-                enemySnapshots.Add(nextWaveSnapshot);
-                localSnapshots.FinalSnapshot = nextWaveSnapshot;
-                enemySnapshots.FinalSnapshot = nextWaveSnapshot;
-                VersusPlugin.Log.LogInfo($"attach-pre: snapshot series waves={snapshot.WaveData.WaveNumber},{nextWaveSnapshot.WaveData.WaveNumber}");
+                var waveSnapshot = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(snapshot));
+                if (waveSnapshot?.WaveData == null)
+                {
+                    continue;
+                }
+
+                waveSnapshot.WaveData.WaveNumber = wave;
+                waveSnapshot.WaveData.IsMultiplayer = true;
+                localSnapshots.Add(waveSnapshot);
+                enemySnapshots.Add(waveSnapshot);
+                localSnapshots.FinalSnapshot = waveSnapshot;
+                enemySnapshots.FinalSnapshot = waveSnapshot;
             }
+
+            VersusPlugin.Log.LogInfo($"attach-pre: snapshot series waves=0..{SeriesWaves}");
 
             var localRun = new MultiplayerRunData
             {
@@ -1400,6 +1399,227 @@ internal static class LocalSessionProbe
         }
     }
 
+    private static string FreshKingName(Core.CardOwnership owner)
+    {
+        var name = owner.ToString();
+        if (name.StartsWith("KingOf"))
+        {
+            return name.Substring(6);
+        }
+
+        if (name == "JackOfChaos")
+        {
+            return "Chaos";
+        }
+
+        return name;
+    }
+
+    /// <summary>
+    /// Builds a genuine fresh run snapshot (empty 25-area board, one level-1
+    /// Citadel, 3 lives, starting hand, chosen king) from the latest captured
+    /// snapshot. The game has no offline StartNewGame path, so this is how a
+    /// match begins at year 0 instead of inheriting a built-up wave-15 board.
+    /// </summary>
+    public static Gameplay.GameSnapshot BuildFreshSnapshot()
+    {
+        var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
+        if (files.Length == 0)
+        {
+            files = Directory.GetFiles(VersusPlugin.DataDir, "*-capture-*.json");
+        }
+
+        Array.Sort(files, StringComparer.Ordinal);
+        if (files.Length == 0)
+        {
+            throw new InvalidOperationException("no capture available to build a fresh snapshot");
+        }
+
+        var baseSnapshot = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(File.ReadAllText(files[^1]));
+        var json = Newtonsoft.Json.JsonConvert.SerializeObject(baseSnapshot);
+        var fresh = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(json);
+        if (fresh?.WaveData == null || fresh.Areas == null || fresh.Kings == null)
+        {
+            throw new InvalidOperationException("captured snapshot lacks wave/king/area data");
+        }
+
+        ReadChoices(out var kingId, out _);
+        var owner = kingId >= 0 ? (Core.CardOwnership)kingId : Core.CardOwnership.KingOfNothing;
+        var enemy = owner == Core.CardOwnership.KingOfSpells
+            ? Core.CardOwnership.KingOfNothing
+            : Core.CardOwnership.KingOfSpells;
+
+        fresh.WaveData.WaveNumber = 0;
+        fresh.WaveData.PlayerLifes = 3;
+        fresh.WaveData.IsMultiplayer = true;
+        fresh.WaveData.UnitsKilled = 0;
+        fresh.WaveData.UnitsTrained = 0;
+        fresh.WaveData.GoldCollected = 0;
+
+        fresh.Kings.PlayerKing = FreshKingName(owner);
+        fresh.Kings.EnemyKings.Clear();
+        fresh.Kings.EnemyKings.Add(FreshKingName(enemy));
+        fresh.Kings.DisabledKings.Clear();
+
+        foreach (var area in fresh.Areas)
+        {
+            var isCastle = area.PlacedEntityType == "Castle";
+            area.ForceLocked = false;
+            area.PlotHoleEnabled = false;
+            area.IsTreasureEnabled = false;
+            area.ShownLevelOffset = 0;
+            area.MaxCardLevel = 3;
+            area.TroopQuantity = 0;
+            area.EntitySize = 1f;
+            area.TotalDamage = 0d;
+            area.Spells?.Clear();
+            area.CustomProperties?.Clear();
+            area.Stats ??= new Gameplay.GameSnapshot.StatsSnapshot();
+
+            if (isCastle)
+            {
+                area.PlacedCardName = "Citadel";
+                area.PlacedEntityType = "Castle";
+                area.CardLevel = 1;
+                area.Stats.MaxHP = 250d;
+                area.Stats.Strength = 15d;
+                area.Stats.WalkSpeed = 0d;
+                area.Stats.AttackSpeed = 0.6666666666666666d;
+                area.Stats.StunDuration = 0d;
+                area.Stats.StunDurationBoost = 0d;
+                area.Stats.SecondaryAttackSpeed = 0d;
+                area.Stats.SecondaryAttackSpeedBoost = 0d;
+                area.Stats.CritMultiplier = 2d;
+                area.Stats.CritChance = 0d;
+                area.Stats.Projectiles = 0;
+                area.Stats.EffectStacks = 1;
+            }
+            else
+            {
+                area.PlacedCardName = string.Empty;
+                area.PlacedEntityType = string.Empty;
+                area.CardLevel = 0;
+                area.Stats.MaxHP = 0d;
+                area.Stats.Strength = 0d;
+                area.Stats.WalkSpeed = 0d;
+                area.Stats.AttackSpeed = 0d;
+                area.Stats.StunDuration = 0d;
+                area.Stats.StunDurationBoost = 0d;
+                area.Stats.SecondaryAttackSpeed = 0d;
+                area.Stats.SecondaryAttackSpeedBoost = 0d;
+                area.Stats.CritMultiplier = 0d;
+                area.Stats.CritChance = 0d;
+                area.Stats.Projectiles = 0;
+                area.Stats.EffectStacks = 0;
+            }
+        }
+
+        if (fresh.HandCards?.Cards != null)
+        {
+            fresh.HandCards.Cards.Clear();
+            fresh.HandCards.Cards.Add("Library");
+            fresh.HandCards.Cards.Add("Warlock");
+            fresh.HandCards.Cards.Add("Offering");
+        }
+
+        fresh.Policies?.Policies?.Clear();
+        if (fresh.Blessing != null)
+        {
+            fresh.Blessing.Name = string.Empty;
+            fresh.Blessing.Areas?.Clear();
+        }
+
+        if (fresh.GraceBlessing != null)
+        {
+            fresh.GraceBlessing.Name = string.Empty;
+            fresh.GraceBlessing.Areas?.Clear();
+        }
+
+        fresh.Traps?.Clear();
+
+        var troops = 0;
+        var buildings = 0;
+        foreach (var area in fresh.Areas)
+        {
+            if (area.PlacedEntityType == "Troop") troops++;
+            if (area.PlacedEntityType == "Building") buildings++;
+        }
+
+        VersusPlugin.Log.LogInfo(
+            $"fresh: built from {Path.GetFileName(files[^1])} king={fresh.Kings.PlayerKing} " +
+            $"enemy={fresh.Kings.EnemyKings[0]} wave={fresh.WaveData.WaveNumber} lives={fresh.WaveData.PlayerLifes} " +
+            $"areas={fresh.Areas.Count} troops={troops} buildings={buildings}");
+        return fresh;
+    }
+
+    /// <summary>
+    /// Activates the game's native "Multiplayer Screen" (present but inactive in
+    /// the Gameplay scene) and populates it with the gauntlet runs. This is the
+    /// official enemy-face bar shown at the start of a multiplayer match.
+    /// </summary>
+    public static void ShowMpScreen()
+    {
+        try
+        {
+            var screens = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_MultiplayerScreen>();
+            if (screens == null || screens.Length == 0)
+            {
+                VersusPlugin.Log.LogWarning("mp-screen: no Multiplayer Screen found");
+                return;
+            }
+
+            var screen = screens[0];
+            screen.gameObject.SetActive(true);
+            var runs = MultiplayerManager.Session?.GauntletEnemies;
+            if (runs == null || runs.Count == 0)
+            {
+                VersusPlugin.Log.LogWarning("mp-screen: no gauntlet runs");
+                return;
+            }
+
+            var array = new Il2CppReferenceArray<MultiplayerRunData>(runs.Count);
+            for (var i = 0; i < runs.Count; i++)
+            {
+                array[i] = runs[i];
+            }
+
+            System.Action<MultiplayerRunData> onClick = run =>
+                VersusPlugin.Log.LogInfo($"mp-screen: face clicked run={run?.runId}");
+            System.Func<bool> canInteract = () => true;
+            var ilOnClick = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<MultiplayerRunData>>(onClick);
+            var ilCanInteract = DelegateSupport.ConvertDelegate<Il2CppSystem.Func<bool>>(canInteract);
+
+            var method = typeof(GameplayInterface.GameplayUI_MultiplayerScreen).GetMethod("PopulateEnemyFaces",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            method?.Invoke(screen, new object[] { array, ilOnClick, ilCanInteract });
+            VersusPlugin.Log.LogInfo($"mp-screen: populated {runs.Count} enemy faces");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"mp-screen failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    public static void DumpFreshSnapshot()
+    {
+        try
+        {
+            var fresh = new Gameplay.GameSnapshot();
+            var json = Newtonsoft.Json.JsonConvert.SerializeObject(fresh);
+            VersusPlugin.Log.LogInfo($"dump-fresh: bytes={json.Length} wave={fresh.WaveData?.WaveNumber} " +
+                $"lives={fresh.WaveData?.PlayerLifes} areas={fresh.Areas?.Count} " +
+                $"playerKing={fresh.Kings?.PlayerKing} enemyKings={fresh.Kings?.EnemyKings?.Count}");
+            var path = Path.Combine(VersusPlugin.DataDir, "fresh-template.json");
+            File.WriteAllText(path, json);
+            VersusPlugin.Log.LogInfo($"dump-fresh: wrote {path}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"dump-fresh failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
     public static void DumpPerks()
     {
         try
@@ -1539,35 +1759,22 @@ internal static class LocalSessionProbe
     {
         try
         {
-            var files = Directory.GetFiles(VersusPlugin.DataDir, "*-f7-capture-*.json");
-            Array.Sort(files, StringComparer.Ordinal);
-            if (files.Length == 0)
+            var snapshot = BuildFreshSnapshot();
+            var troopAreas = 0;
+            var buildingAreas = 0;
+            if (snapshot.Areas != null)
             {
-                VersusPlugin.Log.LogWarning("load-run: no captured snapshot available");
-                return;
-            }
-
-            var snapshot = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(File.ReadAllText(files[^1]));
-            if (snapshot == null)
-            {
-                VersusPlugin.Log.LogWarning("load-run: snapshot failed to deserialize");
-                return;
+                foreach (var area in snapshot.Areas)
+                {
+                    if (area.PlacedEntityType == "Troop") troopAreas++;
+                    if (area.PlacedEntityType == "Building") buildingAreas++;
+                }
             }
 
             VersusPlugin.Log.LogInfo(
                 $"load-run: snapshot wave={snapshot.WaveData?.WaveNumber ?? -1} waveDataMultiplayer={snapshot.WaveData?.IsMultiplayer} " +
-                $"session={(MultiplayerManager.Session == null ? "null" : "set")}");
-
-            var singleLoad = File.Exists(Path.Combine(VersusPlugin.DataDir, "single-load"));
-            if (snapshot.WaveData != null && !singleLoad)
-            {
-                snapshot.WaveData.IsMultiplayer = true;
-                VersusPlugin.Log.LogInfo($"load-run: waveData.IsMultiplayer set to {snapshot.WaveData.IsMultiplayer}");
-            }
-            else
-            {
-                VersusPlugin.Log.LogInfo($"load-run: single-load flag; leaving waveData.IsMultiplayer={snapshot.WaveData?.IsMultiplayer}");
-            }
+                $"session={(MultiplayerManager.Session == null ? "null" : "set")} " +
+                $"troops={troopAreas} buildings={buildingAreas}");
 
             try
             {

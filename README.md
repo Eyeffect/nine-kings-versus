@@ -65,7 +65,8 @@ Press **Ctrl+Alt+F11** or click the **VERSUS** button to open the menu.
 
 - Only loopback two-process tests have been run; a real two-PC LAN test is still
   needed. A two-process test now reaches a shared result with official end screens
-  on both copies (`timeout decision ... loser=join` → `OnCompleteGame`).
+  on both copies (`OnCompleteGame` Victory/Defeat). Matches start from a fresh
+  wave-0 board and show the native multiplayer enemy-face screen.
 - The attached session's combat can stall (constant entity counts, no life loss).
   The host therefore resolves each wave after a 12 s grace period (life count, then
   snapshot kills, then a stable wave-based tiebreak), broadcasts it, and both peers
@@ -73,9 +74,11 @@ Press **Ctrl+Alt+F11** or click the **VERSUS** button to open the menu.
   the official end screen. Army-elimination results are not yet achieved.
 - The two local copies share the same `LocalLow` settings folder, causing
   save-file conflicts; end-screen calls have a retry.
-- `GameplayUI_MultiplayerScreen.PopulateEnemyFaces` (the original avatar widget)
-  NREs outside the hub-driven multiplayer start; the `avatar-bar` flag builds a
-  substitute from the game's sprites.
+- The game stops advancing waves at 32, and the alternating tiebreak keeps both
+  life counts high, so a full match can run 30+ waves before a winner is reached.
+- The `avatar-bar` flag still builds a substitute bar from the game's sprites; the
+  native `GameplayUI_MultiplayerScreen` is now activated and populated at match
+  start instead.
 - No installer or one-click host/join flow yet.
 
 ## Reverse engineering notes

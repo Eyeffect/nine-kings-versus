@@ -335,3 +335,10 @@ Decompiled the official flow: `MultiplayerManager.StartGame.MoveNext` (matchmaki
 - Removed the single-wave freeze (`ResultPending` now freezes only after the match result). This replaces the earlier one-shot timeout result.
 
 Still unverified: real units fighting (attached-session combat stalls), army-elimination results, true two-PC LAN.
+
+## Fresh start and enemy splash (2026-11-19, part 3)
+
+- The match now begins at wave 0 on a genuinely empty board. `BuildFreshSnapshot()` clears all placements (0 troops / 0 buildings), keeps one level-1 Citadel, resets lives to 3 and the hand to Library/Warlock/Offering, and sets the chosen king/opponent. Both session construction and `LoadGame` use it. Verified: `fresh: built ... troops=0 buildings=0`, `load-run: snapshot wave=0`.
+- A fresh board makes the game's own `CaptureSnapshot()` return null (and sometimes throw in `CastleBase.GetMaxHP → Entity.GetWaveBoosts`), which used to kill state exchange. `SnapshotDump.WriteFallback` now sends our own snapshot JSON instead, so the handshake completes from wave 0.
+- Handshake and auto-versus accept wave 0; the session carries a 64-wave snapshot series so `GetWaveSnapshot` resolves as the game advances (loop verified through wave 32).
+- Enemy reveal: `GameplayUI/Multiplayer Screen` is present in the Gameplay scene but inactive. `GameplayMultiplayerManager.Start` runs with `gauntlet=1 active=True` but leaves it off. `ShowMpScreen()` activates it and calls `PopulateEnemyFaces(runs, onFaceClicked, canInteract)` — now succeeds with the properly attached session (the earlier NRE was a symptom of the broken session), and runs once per match. Verified: `mp-screen: populated 1 enemy faces`.

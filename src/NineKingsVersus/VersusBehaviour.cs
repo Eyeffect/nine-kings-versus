@@ -41,6 +41,8 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static int _combatSinceWave = -1;
     private static int _waveResolvedWave = -1;
     private static float _nextWaveAt = -1f;
+    private static float _mpScreenAt = -1f;
+    private static bool _mpScreenShown;
     private static int _verifySamples;
     private float _autoAt = -1f;
     private static float _attachRetryAt = -1f;
@@ -96,6 +98,35 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             System.IO.File.Delete(dumpPerks);
             LocalSessionProbe.DumpPerks();
+        }
+
+        var dumpFresh = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-fresh");
+        if (System.IO.File.Exists(dumpFresh))
+        {
+            System.IO.File.Delete(dumpFresh);
+            LocalSessionProbe.DumpFreshSnapshot();
+        }
+
+        // Activate the native enemy-face bar once the Gameplay scene has settled.
+        // GameplayMultiplayerManager.Start leaves it inactive in our loaded run, so
+        // the enemy reveal never appears unless we enable and populate it ourselves.
+        if (_lastScene == "Gameplay" && VersusNet.Connected && !_mpScreenShown && _mpScreenAt < 0f)
+        {
+            _mpScreenAt = Time.time + 2f;
+        }
+
+        if (_mpScreenAt > 0f && Time.time >= _mpScreenAt)
+        {
+            _mpScreenAt = -1f;
+            _mpScreenShown = true;
+            LocalSessionProbe.ShowMpScreen();
+        }
+
+        var showMpScreen = System.IO.Path.Combine(VersusPlugin.DataDir, "show-mp-screen");
+        if (_lastScene == "Gameplay" && System.IO.File.Exists(showMpScreen))
+        {
+            System.IO.File.Delete(showMpScreen);
+            LocalSessionProbe.ShowMpScreen();
         }
 
         var skipIntro = System.IO.Path.Combine(VersusPlugin.DataDir, "skip-intro");
@@ -488,7 +519,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         var startBattle = System.IO.Path.Combine(VersusPlugin.DataDir, "start-battle");
-        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 0
             && System.IO.File.Exists(startBattle))
         {
             System.IO.File.Delete(startBattle);
@@ -496,9 +527,10 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         // auto-versus: with a connected peer, exchange ready/go and start the same
-        // wave on both machines, then let the second press begin combat.
+        // wave on both machines, then let the second press begin combat. A fresh run
+        // begins at wave 0 (the initial placement year), so include 0.
         var autoVersus = System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus");
-        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 1
+        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 0
             && System.IO.File.Exists(autoVersus) && VersusNet.Connected)
         {
             AutoVersusStep(Core.Wave.Data.Wave);
@@ -1835,6 +1867,8 @@ public sealed class VersusBehaviour : MonoBehaviour
         _waveResolvedWave = -1;
         _nextWaveAt = -1f;
         _endShown = false;
+        _mpScreenAt = -1f;
+        _mpScreenShown = false;
         VersusNet.ResetMatchState();
     }
 
