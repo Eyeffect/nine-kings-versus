@@ -1511,8 +1511,28 @@ internal static class LocalSessionProbe
         fresh.WaveData.GoldCollected = 0;
 
         fresh.Kings.PlayerKing = FreshKingName(owner);
+        // A match starts with three active enemy kings. They rotate between battles
+        // and a new one is chosen when one is defeated (SwitchEnemyKings / Diplomat).
         fresh.Kings.EnemyKings.Clear();
         fresh.Kings.EnemyKings.Add(FreshKingName(enemy));
+        foreach (var extra in new[]
+        {
+            Core.CardOwnership.KingOfSpells, Core.CardOwnership.KingOfNomads,
+            Core.CardOwnership.KingOfStone, Core.CardOwnership.KingOfNature,
+            Core.CardOwnership.KingOfBlood, Core.CardOwnership.KingOfGreed,
+        })
+        {
+            if (fresh.Kings.EnemyKings.Count >= 3)
+            {
+                break;
+            }
+
+            if (extra != owner && extra != enemy)
+            {
+                fresh.Kings.EnemyKings.Add(FreshKingName(extra));
+            }
+        }
+
         fresh.Kings.DisabledKings.Clear();
 
         foreach (var area in fresh.Areas)
@@ -1689,6 +1709,112 @@ internal static class LocalSessionProbe
         }
     }
 
+    private static float _showcaseAcceptAt = -1f;
+    private static float _diplomatContinueAt = -1f;
+
+    /// <summary>
+    /// Defeating a multiplayer king queues a DiplomatView "declare war" modal
+    /// (m_QueuedDefeatedMultiplayerKings / Screen01.ContinueBtn). If it is never
+    /// clicked the game softlocks and Escape stops working. Press Continue after a
+    /// short delay so the message is visible but gameplay resumes.
+    /// </summary>
+    public static void PumpDiplomatView()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_DiplomatView>();
+            var view = all != null && all.Length > 0 ? all[0] : null;
+            if (view == null || !view.gameObject.activeInHierarchy)
+            {
+                _diplomatContinueAt = -1f;
+                return;
+            }
+
+            if (_diplomatContinueAt < 0f)
+            {
+                _diplomatContinueAt = UnityEngine.Time.time + 2f;
+                return;
+            }
+
+            if (UnityEngine.Time.time < _diplomatContinueAt)
+            {
+                return;
+            }
+
+            _diplomatContinueAt = -1f;
+            var field = typeof(GameplayInterface.GameplayUI_DiplomatView).GetField("screen01",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var screen = field?.GetValue(view);
+            var btnField = screen?.GetType().GetField("ContinueBtn",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var button = btnField?.GetValue(screen) as UnityEngine.UI.Button;
+            if (button != null)
+            {
+                button.onClick.Invoke();
+                VersusPlugin.Log.LogInfo("diplomat: pressed Screen01 Continue button");
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("diplomat: Continue button not found");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"diplomat pump failed: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// GameplayUI_EnemyShowcase is a modal ("enemy kings declaring war") with an
+    /// Accept button. Showing it without clicking Accept softlocks the run and blocks
+    /// Escape. Let it display briefly, then press its own Accept button.
+    /// </summary>
+    public static void PumpEnemyShowcase()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_EnemyShowcase>();
+            var showcase = all != null && all.Length > 0 ? all[0] : null;
+            if (showcase == null || !showcase.gameObject.activeInHierarchy)
+            {
+                _showcaseAcceptAt = -1f;
+                return;
+            }
+
+            if (_showcaseAcceptAt < 0f)
+            {
+                _showcaseAcceptAt = UnityEngine.Time.time + 3f;
+                return;
+            }
+
+            if (UnityEngine.Time.time < _showcaseAcceptAt)
+            {
+                return;
+            }
+
+            _showcaseAcceptAt = -1f;
+            var field = typeof(GameplayInterface.GameplayUI_EnemyShowcase).GetField("_acceptBtn",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            var button = field?.GetValue(showcase) as UnityEngine.UI.Button;
+            if (button != null)
+            {
+                button.onClick.Invoke();
+                VersusPlugin.Log.LogInfo("showcase: pressed EnemyShowcase Accept button");
+            }
+            else
+            {
+                VersusPlugin.Log.LogWarning("showcase: EnemyShowcase Accept button not found");
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"showcase pump failed: {e.Message}");
+        }
+    }
+
     public static void PlayYearShowcase()
     {
         try
@@ -1708,7 +1834,8 @@ internal static class LocalSessionProbe
             method?.Invoke(panel, null);
             VersusPlugin.Log.LogInfo($"showcase: ShowcaseYear invoked panel={panel.name}");
 
-            var enemyShowcase = GameplayInterface.GameplayUI.EnemyShowcase;
+            var allShowcases = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_EnemyShowcase>();
+            var enemyShowcase = allShowcases != null && allShowcases.Length > 0 ? allShowcases[0] : null;
             if (enemyShowcase != null)
             {
                 var esType = enemyShowcase.GetType();

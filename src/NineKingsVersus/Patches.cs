@@ -127,7 +127,8 @@ internal static class Patches
                     if (refresh != null)
                     {
                         var enumType = refresh.GetParameters()[0].ParameterType;
-                        var avoid = System.Enum.ToObject(enumType, 0);
+                        LocalSessionProbe.ReadChoices(out var playerKingId, out _);
+                        var avoid = System.Enum.ToObject(enumType, playerKingId >= 0 ? playerKingId : 0);
                         refresh.Invoke(properties, new object[] { avoid });
                     }
                     else

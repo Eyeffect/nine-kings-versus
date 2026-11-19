@@ -76,6 +76,8 @@ public sealed class VersusBehaviour : MonoBehaviour
     {
         TrackScene();
         VersusNet.Tick();
+        LocalSessionProbe.PumpEnemyShowcase();
+        LocalSessionProbe.PumpDiplomatView();
 
         if (_pendingEndType.HasValue && _endRetryAt > 0f && Time.time >= _endRetryAt)
         {
