@@ -2028,6 +2028,18 @@ internal static class LocalSessionProbe
                 (field?.GetValue(menu) as UnityEngine.GameObject)?.SetActive(false);
             }
 
+            // The main container "Holder" (m_HolderGroup) is what Show() normally
+            // activates; without it the GamePaused text and buttons stay hidden.
+            var holderField = typeof(Core.GameplayUI_PauseMenu).GetField("m_HolderGroup", flags);
+            var holderGroup = holderField?.GetValue(menu) as UnityEngine.CanvasGroup;
+            if (holderGroup != null)
+            {
+                holderGroup.gameObject.SetActive(true);
+                holderGroup.alpha = 1f;
+                holderGroup.interactable = true;
+                holderGroup.blocksRaycasts = true;
+            }
+
             var mainField = typeof(Core.GameplayUI_PauseMenu).GetField("m_MainPanel", flags);
             var mainPanel = mainField?.GetValue(menu) as UnityEngine.GameObject;
             if (mainPanel != null)
@@ -2061,6 +2073,46 @@ internal static class LocalSessionProbe
         stateProp?.SetValue(null, _paused);
         UnityEngine.Time.timeScale = on ? 1f : 0f;
         VersusPlugin.Log.LogInfo($"escape: pause toggled on={_paused}");
+    }
+
+    public static void DumpPauseHierarchy()
+    {
+        try
+        {
+            var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
+            var menu = all != null && all.Length > 0 ? all[0] : null;
+            if (menu == null)
+            {
+                VersusPlugin.Log.LogWarning("pause-tree: menu not found");
+                return;
+            }
+
+            LogPauseTree(menu.transform, 0);
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"pause-tree failed: {e.Message}");
+        }
+    }
+
+    private static void LogPauseTree(UnityEngine.Transform t, int depth)
+    {
+        if (t == null || depth > 5)
+        {
+            return;
+        }
+
+        var button = t.GetComponent<UnityEngine.UI.Button>();
+        var text = t.GetComponent<TMPro.TMP_Text>();
+        var group = t.GetComponent<UnityEngine.CanvasGroup>();
+        VersusPlugin.Log.LogInfo(
+            $"pause-tree: {"  ".PadRight(depth * 2)}{t.name} active={t.gameObject.activeSelf} " +
+            $"btn={(button != null ? "yes" : "-")} text={(text == null ? "-" : text.text)} " +
+            $"alpha={(group == null ? "-" : group.alpha.ToString("F2"))}");
+        for (var i = 0; i < t.childCount; i++)
+        {
+            LogPauseTree(t.GetChild(i), depth + 1);
+        }
     }
 
     public static void ProbeUiGetters()

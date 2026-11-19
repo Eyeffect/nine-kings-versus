@@ -87,6 +87,13 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.ProbeUiGetters();
         }
 
+        var pauseTree = System.IO.Path.Combine(VersusPlugin.DataDir, "dump-pause-tree");
+        if (System.IO.File.Exists(pauseTree))
+        {
+            System.IO.File.Delete(pauseTree);
+            LocalSessionProbe.DumpPauseHierarchy();
+        }
+
         var nativeEscape = System.IO.Path.Combine(VersusPlugin.DataDir, "test-escape-native");
         if (System.IO.File.Exists(nativeEscape))
         {
