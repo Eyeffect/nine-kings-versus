@@ -2174,11 +2174,13 @@ internal static class LocalSessionProbe
                 return;
             }
 
-            var method = typeof(Core.GameplayUI_PauseMenu).GetMethod("SwitchVisibility",
+            // Call the base UISubController.Show() directly: the override's
+            // hub-specific checks NRE offline, but the base handles panel activation.
+            var baseShow = typeof(Core.GameplayUI_PauseMenu).BaseType?.GetMethod("Show",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                 System.Reflection.BindingFlags.Instance);
-            method?.Invoke(menu, null);
-            VersusPlugin.Log.LogInfo($"native-pause: SwitchVisibility done active={menu.gameObject.activeInHierarchy}");
+            baseShow?.Invoke(menu, null);
+            VersusPlugin.Log.LogInfo($"native-pause: base Show done active={menu.gameObject.activeInHierarchy}");
         }
         catch (Exception e)
         {

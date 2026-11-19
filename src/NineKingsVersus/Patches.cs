@@ -419,6 +419,48 @@ internal static class Patches
         }
     }
 
+    [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "Show")]
+    internal static class PauseShowOverridePatch
+    {
+        private static bool Prefix(Core.GameplayUI_PauseMenu __instance)
+        {
+            // The native Show() NREs offline on hub-only state. Do the essential
+            // panel activation here and skip the original entirely.
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+            var type = typeof(Core.GameplayUI_PauseMenu);
+
+            foreach (var name in new[] { "m_OptionsPanel", "m_ForfeitPanel", "m_QuitPanel", "m_ReallyQuitPanel" })
+            {
+                (type.GetField(name, flags)?.GetValue(__instance) as UnityEngine.GameObject)?.SetActive(false);
+            }
+
+            var holder = type.GetField("m_HolderGroup", flags)?.GetValue(__instance) as UnityEngine.CanvasGroup;
+            if (holder != null)
+            {
+                holder.gameObject.SetActive(true);
+                holder.alpha = 1f;
+                holder.interactable = true;
+                holder.blocksRaycasts = true;
+            }
+
+            var main = type.GetField("m_MainPanel", flags)?.GetValue(__instance) as UnityEngine.GameObject;
+            if (main != null)
+            {
+                foreach (var g in main.GetComponentsInChildren<UnityEngine.CanvasGroup>(true))
+                {
+                    g.alpha = 1f;
+                    g.interactable = true;
+                    g.blocksRaycasts = true;
+                }
+            }
+
+            __instance.gameObject.SetActive(true);
+            VersusPlugin.Log.LogInfo("PauseMenu.Show replaced: hub state bypassed, panels activated");
+            return false;
+        }
+    }
+
     [HarmonyPatch(typeof(Core.GameplayUI_PauseMenu), "CanOpenPauseMenu")]
     internal static class CanOpenPauseMenuPatch
     {
