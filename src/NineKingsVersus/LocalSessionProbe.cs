@@ -1853,6 +1853,24 @@ internal static class LocalSessionProbe
         }
     }
 
+    private static void ActivateAll(UnityEngine.Transform t)
+    {
+        if (t == null)
+        {
+            return;
+        }
+
+        if (!t.gameObject.activeSelf)
+        {
+            t.gameObject.SetActive(true);
+        }
+
+        for (var i = 0; i < t.childCount; i++)
+        {
+            ActivateAll(t.GetChild(i));
+        }
+    }
+
     private static void DumpPauseFields(Core.GameplayUI_PauseMenu menu)
     {
         try
@@ -1999,14 +2017,25 @@ internal static class LocalSessionProbe
         var on = _paused;
         if (menu != null && !on)
         {
-            var mainField = typeof(Core.GameplayUI_PauseMenu).GetField("m_MainPanel",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
+            // Show() throws before activating the button hierarchy. Activate the
+            // main panel and its children only - activating every child also brings
+            // up the Options/Forfeit/Quit panels layered on top.
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                        System.Reflection.BindingFlags.Instance;
+            foreach (var panelName in new[] { "m_OptionsPanel", "m_ForfeitPanel", "m_QuitPanel", "m_ReallyQuitPanel" })
+            {
+                var field = typeof(Core.GameplayUI_PauseMenu).GetField(panelName, flags);
+                (field?.GetValue(menu) as UnityEngine.GameObject)?.SetActive(false);
+            }
+
+            var mainField = typeof(Core.GameplayUI_PauseMenu).GetField("m_MainPanel", flags);
             var mainPanel = mainField?.GetValue(menu) as UnityEngine.GameObject;
             if (mainPanel != null)
             {
-                mainPanel.SetActive(true);
+                ActivateAll(mainPanel.transform);
             }
+
+            menu.gameObject.SetActive(true);
 
             var groups = menu.GetComponentsInChildren<UnityEngine.CanvasGroup>(true);
             if (groups != null)
