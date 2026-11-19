@@ -2030,11 +2030,38 @@ internal static class LocalSessionProbe
     public static void TogglePause()
     {
         var all = UnityEngine.Resources.FindObjectsOfTypeAll<Core.GameplayUI_PauseMenu>();
-        var menu = all != null && all.Length > 0 ? all[0] : null;
+        Core.GameplayUI_PauseMenu menu = null;
+        try
+        {
+            menu = GameplayInterface.GameplayUI.PauseMenu;
+        }
+        catch
+        {
+        }
+
+        if (menu == null && all != null && all.Length > 0)
+        {
+            menu = all[0];
+        }
+
+        VersusPlugin.Log.LogInfo($"escape: pause menus found={all?.Length ?? -1} using={menu?.name ?? "null"}");
         if (menu == null)
         {
             VersusPlugin.Log.LogWarning("escape: pause menu not found");
             return;
+        }
+
+        // Only one pause menu should be visible. The scene can contain a second
+        // (wishlist) variant; keep the one the game uses and hide the rest.
+        if (all != null)
+        {
+            foreach (var other in all)
+            {
+                if (other != menu && other != null)
+                {
+                    other.gameObject.SetActive(false);
+                }
+            }
         }
 
         // Decide from the ACTUAL panel state, not our flag. The game can close or
@@ -2048,7 +2075,7 @@ internal static class LocalSessionProbe
         var mainShown = FindChildByName(menu.transform, "Main");
         if (_paused && visible && (mainShown == null || !mainShown.activeInHierarchy))
         {
-            foreach (var subName in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn" })
+            foreach (var subName in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn", "Casual Representation" })
             {
                 var sub = FindChildByName(menu.transform, subName);
                 if (sub != null && sub.activeSelf)
@@ -2074,18 +2101,32 @@ internal static class LocalSessionProbe
             System.Reflection.BindingFlags.Static);
         if (opening)
         {
-            // Force the exact hierarchy the native menu uses: top-level Holder and
-            // Main active, every sub-panel and the wishlist variant inactive.
-            foreach (var subName in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn" })
+            // Activate only the Holder object and the Main panel. Activating the
+            // whole Holder tree would also re-enable the wishlist variant and every
+            // sub-panel, which looked like a second, different pause menu.
+            var topHolder = FindChildByName(menu.transform, "Holder");
+            if (topHolder != null)
+            {
+                topHolder.SetActive(true);
+                var cg = topHolder.GetComponent<UnityEngine.CanvasGroup>();
+                if (cg != null)
+                {
+                    cg.alpha = 1f;
+                    cg.interactable = true;
+                    cg.blocksRaycasts = true;
+                }
+            }
+
+            var mainPanel = FindChildByName(menu.transform, "Main");
+            if (mainPanel != null) ActivateAll(mainPanel.transform);
+
+            // Deactivate sub-panels and the wishlist variant AFTER the activation
+            // pass, so they stay off.
+            foreach (var subName in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn", "Casual Representation" })
             {
                 var sub = FindChildByName(menu.transform, subName);
                 if (sub != null) sub.SetActive(false);
             }
-
-            var topHolder = FindChildByName(menu.transform, "Holder");
-            if (topHolder != null) ActivateAll(topHolder.transform);
-            var mainPanel = FindChildByName(menu.transform, "Main");
-            if (mainPanel != null) ActivateAll(mainPanel.transform);
 
             menu.gameObject.SetActive(true);
 

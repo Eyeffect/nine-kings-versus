@@ -416,9 +416,10 @@ internal static class Patches
                         System.Reflection.BindingFlags.Instance;
             var type = typeof(Core.GameplayUI_PauseMenu);
 
-            foreach (var name in new[] { "m_OptionsPanel", "m_ForfeitPanel", "m_QuitPanel", "m_ReallyQuitPanel" })
+            foreach (var name in new[] { "Options", "Forfeit_AreYouSure", "Quit", "Quit_AreYouSure", "QuickRestart_AreYouSure", "SteamBtn", "Casual Representation" })
             {
-                (type.GetField(name, flags)?.GetValue(__instance) as UnityEngine.GameObject)?.SetActive(false);
+                var child = FindByName(__instance.transform, name);
+                if (child != null) child.SetActive(false);
             }
 
             var holder = type.GetField("m_HolderGroup", flags)?.GetValue(__instance) as UnityEngine.CanvasGroup;
@@ -526,6 +527,30 @@ internal static class Patches
                 LocalSessionProbe.TogglePause();
             }
         }
+    }
+
+    private static UnityEngine.GameObject FindByName(UnityEngine.Transform root, string name)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        if (root.name == name)
+        {
+            return root.gameObject;
+        }
+
+        for (var i = 0; i < root.childCount; i++)
+        {
+            var found = FindByName(root.GetChild(i), name);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private static UnityEngine.UI.Button FindButton(UnityEngine.Transform root, string name)
