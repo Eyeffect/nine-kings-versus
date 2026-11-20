@@ -370,3 +370,8 @@ A first fresh-board version broke the actual game loop: the capture's 25 unlocke
 4. **Placement order when the last players lose their final life in the same round:** "Whose base fell later" — confirmed.
 5. **Level B (shared battle):** Defer; I decide.
 
+
+## Stage 1 started (foundation)
+
+Added `src/NineKingsVersus/VersusQueue.cs`: a thread-safe message inbox replacing the old "last value wins" slots. Per-sender sequence dedup (duplicates and stale messages dropped), ack tracking, FIFO drain, reset for a new match. All network messages require seq >= 1. Added `tests/VersusQueueTests/` — a no-game console test project that links the source file and runs 12 assertions (FIFO, dedup, stale drop, per-sender independence, malformed drop, reset, concurrent enqueue). All tests pass; plugin still builds. Not yet wired into VersusNet — that is the next Step 1 task.
+
