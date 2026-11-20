@@ -7,5 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/NineKingsVersus/VersusQueue.cs" Link="VersusQueue.cs" />
+    <Compile Include="../../src/NineKingsVersus/ITransport.cs" Link="ITransport.cs" />
+    <Compile Include="../../src/NineKingsVersus/TcpTransport.cs" Link="TcpTransport.cs" />
   </ItemGroup>
 </Project>

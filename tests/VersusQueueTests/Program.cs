@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using NineKingsVersus;
 
@@ -21,7 +23,26 @@ internal static class Program
         return new MatchMessage { Type = type, PlayerId = playerId, Seq = seq };
     }
 
-    private static int Main()
+    private static bool WaitUntil(Func<bool> condition, int timeoutMs)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            if (condition())
+            {
+                return true;
+            }
+            Thread.Sleep(10);
+        }
+        return condition();
+    }
+
+    private static string Receive(ITransport transport)
+    {
+        return transport.TryReceive(out var json) ? json : null;
+    }
+
+    private static void QueueTests()
     {
         // FIFO order
         var q = new VersusQueue();
@@ -71,6 +92,142 @@ internal static class Program
         q = new VersusQueue();
         q.Enqueue(Msg("ready", 3, 2));
         Check("excluded sender seq tracked", !q.Enqueue(Msg("ready", 3, 2)));
+    }
+
+    private static void LoopbackTests()
+    {
+        var port = 39100;
+
+        // Single peer roundtrip
+        using (var host = new TcpTransport())
+        using (var join = new TcpTransport())
+        {
+            host.StartHost(port);
+            join.StartJoin("127.0.0.1", port);
+            Check("loopback both connected", WaitUntil(() => host.Connected && join.Connected, 5000));
+            host.Send("{\"type\":\"ready\",\"seq\":1}");
+            Check("loopback frame delivered", WaitUntil(() => Receive(join) != null, 5000));
+        }
+
+        // Realistic snapshot-sized frame (~30 KB)
+        port++;
+        using (var host = new TcpTransport())
+        using (var join = new TcpTransport())
+        {
+            host.StartHost(port);
+            join.StartJoin("127.0.0.1", port);
+            WaitUntil(() => host.Connected && join.Connected, 5000);
+            var big = new string('x', 30_000);
+            host.Send(big);
+            string got = null;
+            WaitUntil(() => (got = Receive(join)) != null, 5000);
+            Check("30 KB frame intact", got != null && got.Length == 30_000);
+        }
+
+        // Duplicate and reorder through transport -> queue
+        port++;
+        using (var host = new TcpTransport())
+        using (var join = new TcpTransport())
+        {
+            host.StartHost(port);
+            join.StartJoin("127.0.0.1", port);
+            WaitUntil(() => host.Connected && join.Connected, 5000);
+
+            var inbox = new VersusQueue();
+            host.Send("{\"type\":\"state\",\"playerId\":0,\"seq\":3}");
+            host.Send("{\"type\":\"state\",\"playerId\":0,\"seq\":2}");
+            host.Send("{\"type\":\"state\",\"playerId\":0,\"seq\":3}");
+            Thread.Sleep(200);
+            var seen = 0;
+            for (var i = 0; i < 30 && seen < 3; i++)
+            {
+                if (join.TryReceive(out var json))
+                {
+                    var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var seq = doc.RootElement.GetProperty("seq").GetInt32();
+                    if (inbox.Enqueue(new MatchMessage { Type = "state", PlayerId = 0, Seq = seq }))
+                    {
+                        seen++;
+                    }
+                }
+                else
+                {
+                    Thread.Sleep(10);
+                }
+            }
+            Check("dup/reorder dedup end-to-end", seen == 1 && inbox.AckSeq == 3 && inbox.Count == 1);
+        }
+
+        // Disconnect detection
+        port++;
+        using (var host = new TcpTransport())
+        {
+            var join = new TcpTransport();
+            host.StartHost(port);
+            join.StartJoin("127.0.0.1", port);
+            Check("join connected before stop", WaitUntil(() => host.Connected, 5000));
+            join.Stop();
+            Check("host sees disconnect", WaitUntil(() => !host.Connected, 5000));
+            join.Dispose();
+        }
+
+        // Public address rejected
+        using (var join = new TcpTransport())
+        {
+            var rejected = false;
+            try { join.StartJoin("8.8.8.8", 12345); }
+            catch (ArgumentException) { rejected = true; }
+            Check("public peer rejected", rejected);
+        }
+
+        // Star topology: host broadcasts to eight joins (up to 9 players)
+        port++;
+        var joins = new List<TcpTransport>();
+        try
+        {
+            using (var host = new TcpTransport())
+            {
+                host.StartHost(port);
+                for (var i = 0; i < 8; i++)
+                {
+                    var join = new TcpTransport();
+                    join.StartJoin("127.0.0.1", port);
+                    joins.Add(join);
+                }
+
+                Check("host accepted 8 peers", WaitUntil(() =>
+                {
+                    foreach (var join in joins)
+                    {
+                        if (!join.Connected) return false;
+                    }
+                    return true;
+                }, 8000));
+
+                host.Send("{\"type\":\"go\",\"seq\":1}");
+                Check("broadcast reached all 8", WaitUntil(() =>
+                {
+                    foreach (var join in joins)
+                    {
+                        if (Receive(join) == null) return false;
+                    }
+                    return true;
+                }, 8000));
+            }
+        }
+        finally
+        {
+            foreach (var join in joins)
+            {
+                join.Dispose();
+            }
+        }
+    }
+
+    private static int Main()
+    {
+        QueueTests();
+        LoopbackTests();
 
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : $"{_failed} TEST(S) FAILED");
         return _failed == 0 ? 0 : 1;
