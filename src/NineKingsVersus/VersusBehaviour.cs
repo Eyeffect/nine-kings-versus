@@ -16,6 +16,9 @@ namespace NineKingsVersus;
 /// </summary>
 public sealed class VersusBehaviour : MonoBehaviour
 {
+    /// <summary>Single authoritative lifecycle for the current private match.</summary>
+    public static readonly MatchState Match = new();
+
     private static Gameplay.GameSnapshot _cached;
     private static string _lastScene;
     private static bool _autoProbe;
@@ -1738,9 +1741,10 @@ public sealed class VersusBehaviour : MonoBehaviour
 
         VersusNet.SetLocalLives(myLives);
         VersusNet.SetPeerLives(peerLives);
+        Match.ResolveRound(loser);
         VersusPlugin.Log.LogInfo(
             $"wave-loop: wave {wave} resolved, loser={(loser == 0 ? "host" : "join")} " +
-            $"lives={myLives}/{peerLives} (local/peer)");
+            $"lives={myLives}/{peerLives} (local/peer) phase={Match.Phase}");
 
         if (myLives <= 0 || peerLives <= 0)
         {
@@ -1827,6 +1831,7 @@ public sealed class VersusBehaviour : MonoBehaviour
 
         _endShown = true;
         _resultHandled = true;
+        Match.Finish();
         var iAmLoser = (VersusNet.Mode == "host" && loser == 0) || (VersusNet.Mode == "join" && loser == 1);
         VersusPlugin.Log.LogInfo($"match-result: applying {(iAmLoser ? "defeat" : "victory")} on {VersusNet.Mode}");
         if (iAmLoser)
@@ -1934,6 +1939,9 @@ public sealed class VersusBehaviour : MonoBehaviour
                 config.Save();
             }
             ResetMatchState();
+            Match.BeginMatch(2, mode == "host" ? 0 : 1);
+            Match.EnterLobby();
+            VersusPlugin.Log.LogInfo($"match-state: phase={Match.Phase} players={Match.PlayerCount}");
 
             _attachFlowPending = true;
             VersusPlugin.Log.LogInfo($"menu: starting versus match as {mode}");

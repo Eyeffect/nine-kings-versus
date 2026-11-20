@@ -92,6 +92,10 @@ internal static class Patches
             {
                 var session = MultiplayerSystems.MultiplayerManager.Session;
                 var runData = Core.Wave.Data;
+                if (VersusNet.Connected && runData != null && runData.Wave >= 0)
+                {
+                    VersusBehaviour.Match.BeginRound(runData.Wave);
+                }
                 VersusPlugin.Log.LogInfo(
                     $"StartWave end: session={(session == null ? "null" : "set")} gauntlet={session?.GauntletEnemies?.Count ?? -1} " +
                     $"active={session?.GauntletActive.ToString() ?? "n/a"} runMultiplayer={(runData == null ? "no-data" : runData.IsMultiplayer.ToString())} " +

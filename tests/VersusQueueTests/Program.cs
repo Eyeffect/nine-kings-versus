@@ -262,10 +262,61 @@ internal static class Program
         }
     }
 
+    private static void StateTests()
+    {
+        var state = new MatchState();
+        Check("state starts idle", state.Phase == MatchPhase.Idle && state.Round == -1);
+        Check("idle cannot start battle", !state.BeginBattle());
+        Check("idle cannot finish", !state.Finish());
+        Check("rejects same-phase transition", !state.TryTransition(MatchPhase.Idle));
+
+        state.BeginMatch(3, localPlayerId: 1);
+        Check("begin match -> connecting", state.Phase == MatchPhase.Connecting && state.PlayerCount == 3 && state.AlivePlayers == 3);
+        Check("connecting cannot start battle", !state.BeginBattle());
+
+        state.EnterLobby();
+        Check("connecting -> lobby", state.Phase == MatchPhase.Lobby);
+        Check("lobby begins round 1", state.BeginRound(1) && state.Phase == MatchPhase.Placing && state.Round == 1);
+        Check("placing begins battle", state.BeginBattle() && state.Phase == MatchPhase.Battle);
+        Check("battle cannot begin another round", !state.BeginRound(2));
+
+        state.ResolveRound(2);
+        Check("battle -> resolving", state.Phase == MatchPhase.Resolving && state.LastLoser == 2 && state.AlivePlayers == 2);
+        Check("resolving -> next round", state.BeginRound(2) && state.Round == 2 && state.Phase == MatchPhase.Placing);
+        state.BeginBattle();
+        state.ResolveRound(state.LocalPlayerId);
+        Check("local loss does not reduce alive count", state.AlivePlayers == 2);
+
+        state.Finish();
+        Check("resolving -> finished", state.Phase == MatchPhase.Finished);
+        Check("finished cannot begin round", !state.BeginRound(3));
+        Check("finished -> idle via reset", state.TryTransition(MatchPhase.Idle) && state.Phase == MatchPhase.Idle);
+
+        // Disconnect removes an army and ends the match at one survivor.
+        state.BeginMatch(9, localPlayerId: 0);
+        state.EnterLobby();
+        state.BeginRound(1);
+        for (var i = 1; i < 9; i++)
+        {
+            state.RemovePlayer(i);
+        }
+        Check("8 disconnects leave 1 alive", state.AlivePlayers == 1);
+        Check("last survivor finishes match", state.Phase == MatchPhase.Finished);
+
+        // Transition event fires.
+        var seen = 0;
+        var events = new MatchState();
+        events.Changed += (_, _) => seen++;
+        events.BeginMatch(2);
+        events.EnterLobby();
+        Check("transition events fire", seen == 2);
+    }
+
     private static int Main()
     {
         QueueTests();
         ConfigTests();
+        StateTests();
         LoopbackTests();
 
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : $"{_failed} TEST(S) FAILED");
