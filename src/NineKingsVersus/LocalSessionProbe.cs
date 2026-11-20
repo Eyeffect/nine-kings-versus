@@ -531,15 +531,19 @@ internal static class LocalSessionProbe
                 new Il2CppStringArray(0), new Il2CppStringArray(0),
                 new Il2CppStringArray(0), new Il2CppStringArray(0));
 
-            // Every run except the local player is a gauntlet opponent. The game
-            // rotates through them with RefreshWaveKing each wave; hard-coding one
-            // enemy meant the same king every round.
+            // Stage 0(c): leave the gauntlet empty and let the game's own
+            // PrepareMultiplayerGauntlet populate it. Our manual list made Count > 0,
+            // which makes the native method return early. A flag keeps the old path
+            // available for comparison.
             var gauntlet = new Il2CppSystem.Collections.Generic.List<MultiplayerRunData>();
-            foreach (var run in allRuns)
+            if (!File.Exists(Path.Combine(VersusPlugin.DataDir, "native-gauntlet")))
             {
-                if (run.runId != localRun.runId)
+                foreach (var run in allRuns)
                 {
-                    gauntlet.Add(run);
+                    if (run.runId != localRun.runId)
+                    {
+                        gauntlet.Add(run);
+                    }
                 }
             }
 

@@ -101,6 +101,26 @@ internal static class Patches
                     $"enemyTroops={Core.Kingdoms.KingdomAreaManager.GetAreasWithTroops(true)?.Count ?? -1} " +
                     $"enemyAnything={Core.Kingdoms.KingdomAreaManager.GetAreasWithAnythingPlaced(true)?.Count ?? -1}");
 
+                // Stage 0(d): which enemy kings the game has active this wave.
+                try
+                {
+                    var kings = Core.Wave.GetEnemyKings();
+                    var names = new System.Collections.Generic.List<string>();
+                    if (kings != null)
+                    {
+                        foreach (var king in kings)
+                        {
+                            names.Add($"{king?.Owner.ToString() ?? "null"}:{king?.Scriptable?.name ?? "null"}");
+                        }
+                    }
+
+                    VersusPlugin.Log.LogInfo($"wave-enemies: wave={runData?.Wave ?? -1} count={names.Count} [{string.Join(", ", names)}]");
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"wave-enemies probe failed: {e.Message}");
+                }
+
                 var wave = runData?.Wave ?? -1;
                 if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && _arenaSpawnedWave != wave)
                 {
