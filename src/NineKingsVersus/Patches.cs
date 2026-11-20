@@ -224,6 +224,10 @@ internal static class Patches
                 }
 
                 VersusPlugin.Log.LogInfo(
+                    $"PrepareGauntlet gates: isMultiplayer={(data == null ? "no-data" : data.IsMultiplayer.ToString())} " +
+                    $"waveType={(Core.Wave.CurrentWaveProperties == null ? "null" : Core.Wave.CurrentWaveProperties.Type.ToString())} " +
+                    $"gauntletCount={session?.GauntletEnemies?.Count.ToString() ?? "n/a"} active={session?.GauntletActive.ToString() ?? "n/a"}");
+                VersusPlugin.Log.LogInfo(
                     $"PrepareGauntlet in: wave={data?.Wave} runMultiplayer={data?.IsMultiplayer} " +
                     $"profileId={profile?.playerId.ToString() ?? "null"} profileName={settings?.Username ?? "null"} " +
                     $"managerKing={(MultiplayerSystems.MultiplayerManager.Instance?.CurrentSelectedKing == null ? "null" : "set")} " +

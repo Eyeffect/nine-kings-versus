@@ -631,6 +631,31 @@ internal static class LocalSessionProbe
             var emptyList = new Il2CppSystem.Collections.Generic.List<string>();
             var emptyReadOnly = emptyList.Cast<Il2CppSystem.Collections.Generic.IReadOnlyList<string>>();
 
+            // Native run setup takes the active enemy kings from customEnemies. Pass
+            // three real king names so the game has three enemies for this player.
+            var enemies = new Il2CppSystem.Collections.Generic.List<string>();
+            foreach (var k in new[]
+            {
+                Core.CardOwnership.KingOfSpells, Core.CardOwnership.KingOfNothing,
+                Core.CardOwnership.KingOfBlood, Core.CardOwnership.KingOfGreed,
+                Core.CardOwnership.KingOfProgress, Core.CardOwnership.KingOfStone,
+                Core.CardOwnership.KingOfNomads, Core.CardOwnership.KingOfNature,
+            })
+            {
+                if (enemies.Count >= 3)
+                {
+                    break;
+                }
+
+                if (FreshKingName(k) != kingName)
+                {
+                    enemies.Add(FreshKingName(k));
+                }
+            }
+
+            var enemiesReadOnly = enemies.Cast<Il2CppSystem.Collections.Generic.IReadOnlyList<string>>();
+            VersusPlugin.Log.LogInfo($"start-mp: customEnemies=[{string.Join(",", enemies)}]");
+
             var candidates = new (string scene, bool multiplayer)[]
             {
                 ("Gameplay", true),
@@ -644,7 +669,7 @@ internal static class LocalSessionProbe
                 args[0] = kingName;              // playerKing
                 args[1] = difficulty;            // difficulty
                 args[2] = candidate.scene;       // sceneName
-                args[3] = emptyReadOnly;         // customEnemies
+                args[3] = enemiesReadOnly;       // customEnemies (3 kings)
                 args[4] = new Il2CppSystem.Nullable<int>(12345); // null NREs in the wrapper
                 args[5] = true;                  // instaLoad
                 args[6] = emptyReadOnly;         // disabledKings
