@@ -361,3 +361,12 @@ A first fresh-board version broke the actual game loop: the capture's 25 unlocke
 - **(e) Steamworks:** present. `dump.cs` includes `com.rlabrecque.steamworks.net.dll` (Image 49) with `Steamworks.SteamClient`, `SteamAPI.Init()`, `SteamAPI_RestartAppIfNecessary`, `AppId_t`, networking interfaces. No `SteamManager` class in this build. AppID used for test launches: 2784470.
 - **(f) Snapshot size:** ~30,661-30,663 bytes per snapshot at wave 56-57 (JSON). For 9 players the host would receive 8 x ~30 KB per state broadcast — negligible on LAN even at 10 Hz (~2.4 MB/s).
 
+
+## Owner decisions on design open questions (2026-11-20)
+
+1. **Who fights whom:** Native — the game picks 3 enemies for each player. Use the game's own gauntlet selection, not all-vs-all or a ring.
+2. **Eliminated player view:** End screen only. Spectator mode is a possible future addition, not now.
+3. **Eliminated/disconnected player's army:** Remove it from later rounds.
+4. **Placement order when the last players lose their final life in the same round:** "Whose base fell later" — confirmed.
+5. **Level B (shared battle):** Defer; I decide.
+
