@@ -536,7 +536,7 @@ internal static class LocalSessionProbe
             // which makes the native method return early. A flag keeps the old path
             // available for comparison.
             var gauntlet = new Il2CppSystem.Collections.Generic.List<MultiplayerRunData>();
-            if (!File.Exists(Path.Combine(VersusPlugin.DataDir, "native-gauntlet")))
+            if (!(VersusConfig.Current?.HasFlag("native-gauntlet") == true))
             {
                 foreach (var run in allRuns)
                 {

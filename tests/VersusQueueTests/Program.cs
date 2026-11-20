@@ -224,9 +224,48 @@ internal static class Program
         }
     }
 
+    private static void ConfigTests()
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "versus-config-tests-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            var defaults = VersusConfig.Load(dir);
+            Check("config defaults", defaults.mode == "off" && defaults.attachFlow && !defaults.autoStart && !defaults.autoVersus);
+            Check("config unknown flag off", !defaults.HasFlag("does-not-exist"));
+
+            var json = "{\"mode\":\"host\",\"peer\":\"192.168.1.5\",\"port\":29000," +
+                       "\"autoStart\":true,\"autoVersus\":true,\"multiBot\":true,\"arena\":true}";
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, VersusConfig.FileName), json);
+            var loaded = VersusConfig.Load(dir);
+            Check("config loads values", loaded.mode == "host" && loaded.peer == "192.168.1.5" && loaded.port == 29000 &&
+                                        loaded.autoStart && loaded.autoVersus && loaded.multiBot && loaded.arena);
+            Check("config IsEnabled maps flags", loaded.HasFlag("auto-versus") && loaded.HasFlag("multi-bot") && loaded.HasFlag("arena"));
+            Check("config unlisted switch off", !loaded.HasFlag("native-gauntlet"));
+
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "native-gauntlet"), "1");
+            var withLegacy = VersusConfig.Load(dir);
+            Check("legacy flag overrides config", withLegacy.HasFlag("native-gauntlet"));
+
+            loaded.skipIntro = true;
+            loaded.Save();
+            var reread = VersusConfig.Load(dir);
+            Check("config save roundtrip", reread.skipIntro && reread.mode == "host" && reread.autoStart);
+
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, VersusConfig.FileName), "{not json");
+            var broken = VersusConfig.Load(dir);
+            Check("broken config falls back to defaults", broken.mode == "off" && !broken.autoStart);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
+    }
+
     private static int Main()
     {
         QueueTests();
+        ConfigTests();
         LoopbackTests();
 
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : $"{_failed} TEST(S) FAILED");

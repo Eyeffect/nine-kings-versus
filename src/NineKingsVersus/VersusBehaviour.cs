@@ -45,6 +45,7 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static bool _mpScreenShown;
     private static int _verifySamples;
     private float _autoAt = -1f;
+    private static bool _configStartDone;
     private static float _attachRetryAt = -1f;
     private float _heartbeatAt = -1f;
 
@@ -228,8 +229,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.ShowMpScreen();
         }
 
-        var skipIntro = System.IO.Path.Combine(VersusPlugin.DataDir, "skip-intro");
-        if (System.IO.File.Exists(skipIntro))
+        if (VersusConfig.Current?.HasFlag("skip-intro") == true)
         {
             var active = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             if (active == "SplashScreen" || active == "IntroductionVideo")
@@ -401,7 +401,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             _lastNetStateVersion = VersusNet.StateVersion;
             var data = Core.Wave.Data;
             if (_lastScene == "Gameplay" && data != null && !data.Running &&
-                !System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
+                VersusConfig.Current?.HasFlag("arena") != true)
             {
                 VersusPlugin.Log.LogInfo("net: rebuilding opponent board from peer state");
                 LocalSessionProbe.BuildEnemyBoard();
@@ -409,7 +409,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave > 0 &&
-            System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")) &&
+            VersusConfig.Current?.HasFlag("arena") == true &&
             CleanArena.LastWave != Core.Wave.Data.Wave && _arenaLocalWave != Core.Wave.Data.Wave)
         {
             var currentWave = Core.Wave.Data.Wave;
@@ -447,7 +447,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         if (_lastScene == "Gameplay" && Time.time >= _diagAt &&
-            System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")))
+            VersusConfig.Current?.HasFlag("arena") == true)
         {
             _diagAt = Time.time + 5f;
             try
@@ -506,8 +506,8 @@ public sealed class VersusBehaviour : MonoBehaviour
         // The game re-issues rewards when StartWave is repeated; keep the hand from
         // flooding so combat remains playable in arena mode.
         if (_lastScene == "Gameplay" && Time.time >= _handTrimAt &&
-            (System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena")) ||
-             System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "custom-deck"))))
+            (VersusConfig.Current?.HasFlag("arena") == true ||
+             VersusConfig.Current?.HasFlag("custom-deck") == true))
         {
             _handTrimAt = Time.time + 4f;
             try
@@ -569,7 +569,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             _autoAt = -1f;
             Diagnose("auto");
             ProbeCommands();
-            if (System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-start")))
+            if (VersusConfig.Current?.HasFlag("auto-start") == true)
             {
                 TryStartRun();
             }
@@ -578,6 +578,20 @@ public sealed class VersusBehaviour : MonoBehaviour
         // attach-flow: load the hub scene so MultiplayerManager.Instance exists, attach
         // the probe session there, then start a run through Core.Wave.StartNewGame with
         // its own isMultiplayer=true parameter (avoids flipping IsMultiplayer mid-run).
+        // Config-driven startup: a match can be launched entirely from config.json
+        // (mode + autoStart). The old one-shot files still work as overrides.
+        var config = VersusConfig.Current;
+        if (_lastScene == "MainMenu" && !_configStartDone && config != null)
+        {
+            var configMode = config.mode == "join" ? "join" : config.mode == "host" ? "host" : null;
+            if (config.autoStart && configMode != null)
+            {
+                _configStartDone = true;
+                VersusPlugin.Log.LogInfo($"config: auto-starting versus match as {configMode}");
+                StartVersusMatch(configMode);
+            }
+        }
+
         var menuStart = System.IO.Path.Combine(VersusPlugin.DataDir, "menu-start-host");
         if (_lastScene == "MainMenu" && System.IO.File.Exists(menuStart))
         {
@@ -630,16 +644,15 @@ public sealed class VersusBehaviour : MonoBehaviour
         // Auto-starting the battle used to clear the hand the instant a wave began,
         // so the player could never place a card. Combat is now started by the game's
         // own Start Battle button; the ready/go state is still exchanged for sync.
-        var autoVersus = System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus");
         if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 0
-            && System.IO.File.Exists(autoVersus) && VersusNet.Connected)
+            && VersusConfig.Current?.HasFlag("auto-versus") == true && VersusNet.Connected)
         {
             AutoVersusStep(Core.Wave.Data.Wave);
         }
 
         if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
-            && (System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")) ||
-                System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena"))))
+            && (VersusConfig.Current?.HasFlag("auto-versus") == true ||
+                VersusConfig.Current?.HasFlag("arena") == true))
         {
             MatchResultStep();
         }
@@ -1909,13 +1922,17 @@ public sealed class VersusBehaviour : MonoBehaviour
 
             File.WriteAllText(path, $"{{\"mode\":\"{mode}\",\"peer\":\"{peer}\",\"port\":{port}}}");
 
-            // A match started from the native menu needs the same flags the tested
-            // loopback flow used: auto-versus drives the ready/go handshake, the
-            // synced Start Battle, and the shared result; multi-bot gives the
-            // opponent king a real army/base. Without these the run loads but no
-            // battle ever starts and no result is ever computed.
-            ApplyMatchFlag("auto-versus");
-            ApplyMatchFlag("multi-bot");
+            // Persist the match switches in config.json. The legacy flag files are
+            // no longer required for a match to start.
+            var config = VersusConfig.Current;
+            if (config != null)
+            {
+                config.mode = mode;
+                config.autoVersus = true;
+                config.multiBot = true;
+                config.attachFlow = true;
+                config.Save();
+            }
             ResetMatchState();
 
             _attachFlowPending = true;
@@ -1979,8 +1996,8 @@ public sealed class VersusBehaviour : MonoBehaviour
 
     public static bool ClaimStartWave()
     {
-        var active = System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "auto-versus")) ||
-                     System.IO.File.Exists(System.IO.Path.Combine(VersusPlugin.DataDir, "arena"));
+        var active = VersusConfig.Current?.HasFlag("auto-versus") == true ||
+                     VersusConfig.Current?.HasFlag("arena") == true;
         if (!active)
         {
             return true;

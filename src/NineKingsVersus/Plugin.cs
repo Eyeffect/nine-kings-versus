@@ -25,6 +25,7 @@ public sealed class VersusPlugin : BasePlugin
         System.AppDomain.CurrentDomain.FirstChanceException += OnFirstChance;
         DataDir = Path.Combine(Paths.BepInExRootPath, "versus");
         Directory.CreateDirectory(DataDir);
+        VersusConfig.Init(DataDir);
 
         Log.LogInfo($"{Name} {Version} loading (probe)");
         ProbeTypes();

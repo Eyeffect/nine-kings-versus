@@ -90,14 +90,22 @@ internal static class VersusNet
     {
         try
         {
-            var path = Path.Combine(VersusPlugin.DataDir, "net.json");
-            if (!File.Exists(path))
+            var config = VersusConfig.Current;
+            Settings settings = null;
+            if (config != null && (config.mode == "host" || config.mode == "join"))
             {
-                VersusPlugin.Log.LogInfo("net: no net.json; transport disabled");
-                return;
+                settings = new Settings { mode = config.mode, peer = config.peer, port = config.port };
             }
-
-            var settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path));
+            else
+            {
+                var path = Path.Combine(VersusPlugin.DataDir, "net.json");
+                if (!File.Exists(path))
+                {
+                    VersusPlugin.Log.LogInfo("net: no config or net.json; transport disabled");
+                    return;
+                }
+                settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path));
+            }
             if (settings == null || settings.port < 1 || settings.port > 65535)
             {
                 VersusPlugin.Log.LogWarning("net: invalid net.json");

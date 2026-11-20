@@ -122,7 +122,7 @@ internal static class Patches
                 }
 
                 var wave = runData?.Wave ?? -1;
-                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && _arenaSpawnedWave != wave)
+                if (VersusConfig.Current?.HasFlag("arena") == true && wave > 0 && _arenaSpawnedWave != wave)
                 {
                     _arenaSpawnedWave = wave;
                     var opponent = LocalSessionProbe.GetOpponentSnapshot();
@@ -265,10 +265,10 @@ internal static class Patches
             try
             {
                 LocalSessionProbe.EnsureEnemySnapshot("SpawnWave");
-                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "custom-deck")) ||
-                    File.Exists(Path.Combine(VersusPlugin.DataDir, "multi-bot")))
+                if (VersusConfig.Current?.HasFlag("custom-deck") == true ||
+                    VersusConfig.Current?.HasFlag("multi-bot") == true)
                 {
-                    if (File.Exists(Path.Combine(VersusPlugin.DataDir, "multi-bot")))
+                    if (VersusConfig.Current?.HasFlag("multi-bot") == true)
                     {
                         OpponentDeck.InstallBots();
                     }
@@ -278,7 +278,7 @@ internal static class Patches
                     }
                 }
 
-                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")))
+                if (VersusConfig.Current?.HasFlag("arena") == true)
                 {
                     // Official flow: keep the game's own WaveTroops and enemy spawning.
                 }
@@ -330,7 +330,7 @@ internal static class Patches
                     $"waveTroops={Core.Wave.WaveTroops?.Length ?? -1} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
 
                 var wave = Core.Wave.Data?.Wave ?? -1;
-                if (File.Exists(Path.Combine(VersusPlugin.DataDir, "arena")) && wave > 0 && CleanArena.LastWave != wave)
+                if (VersusConfig.Current?.HasFlag("arena") == true && wave > 0 && CleanArena.LastWave != wave)
                 {
                     var opponent = LocalSessionProbe.GetOpponentSnapshot();
                     if (opponent != null)
