@@ -331,6 +331,13 @@ internal static class Patches
     {
         private static void Prefix(bool instant)
         {
+            if (File.Exists(Path.Combine(VersusPlugin.DataDir, "trace-battle-start")))
+            {
+                VersusPlugin.Log.LogWarning(
+                    $"[BATTLE-STACK] instant={instant} cards={GameplayInterface.GameplayUI.HandCards?.CardsCount.ToString() ?? "n/a"}\n" +
+                    new System.Diagnostics.StackTrace());
+            }
+
             try
             {
                 var data = Core.Wave.Data;
