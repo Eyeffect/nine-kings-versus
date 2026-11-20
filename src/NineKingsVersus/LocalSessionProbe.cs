@@ -1737,7 +1737,7 @@ internal static class LocalSessionProbe
         }
     }
 
-    private static float _showcaseAcceptAt = -1f;
+
     private static float _diplomatContinueAt = -1f;
 
     /// <summary>
@@ -1791,55 +1791,6 @@ internal static class LocalSessionProbe
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"diplomat pump failed: {e.Message}");
-        }
-    }
-
-    /// <summary>
-    /// GameplayUI_EnemyShowcase is a modal ("enemy kings declaring war") with an
-    /// Accept button. Showing it without clicking Accept softlocks the run and blocks
-    /// Escape. Let it display briefly, then press its own Accept button.
-    /// </summary>
-    public static void PumpEnemyShowcase()
-    {
-        try
-        {
-            var all = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_EnemyShowcase>();
-            var showcase = all != null && all.Length > 0 ? all[0] : null;
-            if (showcase == null || !showcase.gameObject.activeInHierarchy)
-            {
-                _showcaseAcceptAt = -1f;
-                return;
-            }
-
-            if (_showcaseAcceptAt < 0f)
-            {
-                _showcaseAcceptAt = UnityEngine.Time.time + 3f;
-                return;
-            }
-
-            if (UnityEngine.Time.time < _showcaseAcceptAt)
-            {
-                return;
-            }
-
-            _showcaseAcceptAt = -1f;
-            var field = typeof(GameplayInterface.GameplayUI_EnemyShowcase).GetField("_acceptBtn",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
-            var button = field?.GetValue(showcase) as UnityEngine.UI.Button;
-            if (button != null)
-            {
-                button.onClick.Invoke();
-                VersusPlugin.Log.LogInfo("showcase: pressed EnemyShowcase Accept button");
-            }
-            else
-            {
-                VersusPlugin.Log.LogWarning("showcase: EnemyShowcase Accept button not found");
-            }
-        }
-        catch (Exception e)
-        {
-            VersusPlugin.Log.LogWarning($"showcase pump failed: {e.Message}");
         }
     }
 
@@ -2329,6 +2280,89 @@ internal static class LocalSessionProbe
         }
     }
 
+    /// <summary>
+    /// The native splash fade coroutine does not run in our attached run. Reveal
+    /// the real full-screen background (solid-colour Images, no sprite) and leave
+    /// the card/Accept artwork at its native alpha. Also start the rebellion-flake
+    /// particle system that the splash uses.
+    /// </summary>
+    private static void MakeSplashOpaque(UnityEngine.Transform root)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        var group = root.GetComponent<UnityEngine.CanvasGroup>();
+        if (group != null)
+        {
+            group.alpha = 1f;
+            group.interactable = true;
+            group.blocksRaycasts = true;
+        }
+
+        RevealSolidBackground(root, 0);
+        PlaySplashParticles(root, 0);
+    }
+
+    private static void RevealSolidBackground(UnityEngine.Transform t, int depth)
+    {
+        if (t == null || depth > 6)
+        {
+            return;
+        }
+
+        try
+        {
+            var image = t.GetComponent<UnityEngine.UI.Image>();
+            if (image != null && image.sprite == null)
+            {
+                var color = image.color;
+                color.a = 1f;
+                image.color = color;
+            }
+        }
+        catch
+        {
+            // Some Il2Cpp wrappers cannot unstrip GetComponent<Image>; skip them.
+        }
+
+        for (var i = 0; i < t.childCount; i++)
+        {
+            RevealSolidBackground(t.GetChild(i), depth + 1);
+        }
+    }
+
+    private static void PlaySplashParticles(UnityEngine.Transform t, int depth)
+    {
+        if (t == null || depth > 6)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var component in t.GetComponents<UnityEngine.Component>())
+            {
+                if (component == null || component.GetType().Name != "ParticleSystem")
+                {
+                    continue;
+                }
+
+                var play = component.GetType().GetMethod("Play", System.Type.EmptyTypes);
+                play?.Invoke(component, null);
+            }
+        }
+        catch
+        {
+        }
+
+        for (var i = 0; i < t.childCount; i++)
+        {
+            PlaySplashParticles(t.GetChild(i), depth + 1);
+        }
+    }
+
     public static void ProbeUiGetters()
     {
         try
@@ -2487,36 +2521,6 @@ internal static class LocalSessionProbe
         }
     }
 
-    /// <summary>
-    /// Displays the three enemy-king cards (GameplayUI_EnemyShowcase) as the match
-    /// intro. PumpEnemyShowcase dismisses it after a short delay so it never blocks
-    /// input. No year/cutscene panel is involved.
-    /// </summary>
-    public static void ShowEnemyReveal()
-    {
-        try
-        {
-            var all = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_EnemyShowcase>();
-            var showcase = all != null && all.Length > 0 ? all[0] : null;
-            if (showcase == null)
-            {
-                VersusPlugin.Log.LogWarning("reveal: EnemyShowcase not found");
-                return;
-            }
-
-            var type = typeof(GameplayInterface.GameplayUI_EnemyShowcase);
-            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                        System.Reflection.BindingFlags.Instance;
-            type.GetMethod("Initialize", flags)?.Invoke(showcase, null);
-            type.GetMethod("Show", flags)?.Invoke(showcase, null);
-            VersusPlugin.Log.LogInfo("reveal: EnemyShowcase Initialize+Show invoked");
-        }
-        catch (Exception e)
-        {
-            VersusPlugin.Log.LogWarning($"reveal failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
-        }
-    }
-
     public static void PlayYearShowcase()
     {
         try
@@ -2530,6 +2534,7 @@ internal static class LocalSessionProbe
 
             var panel = panels[0];
             panel.gameObject.SetActive(true);
+            MakeSplashOpaque(panel.transform);
             var method = typeof(GameplayInterface.GameplayUI_YearShowcasePanel).GetMethod("ShowcaseYear",
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
                 System.Reflection.BindingFlags.Instance);
@@ -2545,7 +2550,10 @@ internal static class LocalSessionProbe
                             System.Reflection.BindingFlags.Instance;
                 esType.GetMethod("Initialize", flags)?.Invoke(enemyShowcase, null);
                 esType.GetMethod("Show", flags)?.Invoke(enemyShowcase, null);
-                VersusPlugin.Log.LogInfo("showcase: EnemyShowcase Initialize+Show invoked");
+                MakeSplashOpaque(enemyShowcase.transform);
+                var rootGroup = enemyShowcase.GetComponent<UnityEngine.CanvasGroup>();
+                VersusPlugin.Log.LogInfo($"showcase: year + enemy splash shown alpha={rootGroup?.alpha.ToString("F2") ?? "-"}");
+
             }
             else
             {

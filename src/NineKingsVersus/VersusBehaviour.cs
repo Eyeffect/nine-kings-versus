@@ -80,7 +80,6 @@ public sealed class VersusBehaviour : MonoBehaviour
     {
         TrackScene();
         VersusNet.Tick();
-        LocalSessionProbe.PumpEnemyShowcase();
         LocalSessionProbe.PumpDiplomatView();
         LocalSessionProbe.PumpEscape();
 
@@ -188,7 +187,9 @@ public sealed class VersusBehaviour : MonoBehaviour
         // Activate the native enemy-face bar once the Gameplay scene has settled.
         // GameplayMultiplayerManager.Start leaves it inactive in our loaded run, so
         // the enemy reveal never appears unless we enable and populate it ourselves.
-        if (_lastScene == "Gameplay" && VersusNet.Connected && !_mpScreenShown && _mpScreenAt < 0f)
+        // The splash belongs to the match intro, not to the network handshake:
+        // show it as soon as the Gameplay scene settles, even before a peer joins.
+        if (_lastScene == "Gameplay" && !_mpScreenShown && _mpScreenAt < 0f)
         {
             _mpScreenAt = Time.time + 2f;
         }
@@ -198,10 +199,10 @@ public sealed class VersusBehaviour : MonoBehaviour
             _mpScreenAt = -1f;
             _mpScreenShown = true;
             LocalSessionProbe.ShowMpScreen();
-            // Show only the enemy-card reveal (EnemyShowcase), not the year-cutscene
-            // that used to black-screen the start. PumpEnemyShowcase presses its
-            // Accept button after 3s so the reveal cannot softlock the run.
-            LocalSessionProbe.ShowEnemyReveal();
+            // The native match intro: year splash followed by "Your enemies are:"
+            // with the three enemy-king cards. The player accepts it with the
+            // game's own button, so there is no forced input or custom overlay.
+            LocalSessionProbe.PlayYearShowcase();
         }
 
         var clickStart = System.IO.Path.Combine(VersusPlugin.DataDir, "click-start");
