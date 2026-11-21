@@ -416,8 +416,13 @@ Wave lockstep (latest two-process run):
 - `MatchBarrier.MarkLife` keeps reports keyed by wave and `BeginWave` no longer clears them. Previously a peer's late report for wave N was dropped when another peer advanced to N+1, silently skipping the round. `AllReported(wave)` now checks the exact wave.
 - Verified 8 consecutive rounds (0–7) in lockstep: both peers applied identical tables (`lives=p0:1,p1:1` after round 7), lives fell 5 → 1 from native damage, and `ready/go` repeated for every wave. No skipped rounds in that window. Regression test added for report retention across `BeginWave`.
 
+Real local army (latest QA run):
+- The owner confirmed the headless runs had no local army — the enemy simply rushed the base. Faking card clicks never produced troops.
+- Added a QA-only `LoadSeededRun` path: `Wave.LoadGame` with the seeded snapshot actually instantiates its troop areas. `StartNewGame` ignores them. With this path the local side had `player=209` real entities and `playerTroops=7`, and round 0 resolved from native damage (`lives=0:4,1:5`).
+- Removed the extra QA `SpawnWave()` call; it doubled the opponent army and was the reason the local base died so fast.
+
 Still open (do not claim Stage 2 done):
-- The 20-round criterion is NOT met: the loop stalls at wave 8 with ~205 enemy entities and no player entities. The opponent army has no target once the local castle is gone, so no more native life loss occurs.
+- The 20-round criterion is NOT met. Even with two real armies the fight stalls (wave 1 held at `player=229 enemy=98` with frozen counts) — the long-standing native AI issue: troops do not reliably target each other. This is an engine-level blocker, not a result-layer bug.
 - No elimination / `OnCompleteGame` end screen reached: both peers stopped at one life.
 - No 3-process game test yet; the N-player transport is validated only by the no-game suite.
 - The QA driver still uses the legacy second Start Battle press (with hand clearing) to engage combat. It is flag-gated and never active in a production config, but Stage 3 must still remove that probe path from the shipped flow.

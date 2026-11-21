@@ -589,9 +589,18 @@ public sealed class VersusBehaviour : MonoBehaviour
                 // Official path: Wave.StartNewGame(isMultiplayer=true). The NRE was a
                 // null Nullable<int> seed; passing a real seed makes it work and the
                 // game initializes all its own UI (avatar bar, splash, enemy base).
-                var shortKing = (officialKing ?? "KingOfNothing").Replace("KingOf", string.Empty);
-                LocalSessionProbe.StartMultiplayerRun(shortKing);
-                LocalSessionProbe.ApplyChosenPerks();
+                if (VersusConfig.Current?.HasFlag("bot-army") == true)
+                {
+                    // QA only: LoadGame honours the snapshot's troop areas, so the
+                    // local side has a real army. StartNewGame ignores them.
+                    LocalSessionProbe.LoadSeededRun();
+                }
+                else
+                {
+                    var shortKing = (officialKing ?? "KingOfNothing").Replace("KingOf", string.Empty);
+                    LocalSessionProbe.StartMultiplayerRun(shortKing);
+                    LocalSessionProbe.ApplyChosenPerks();
+                }
             }
             else
             {
@@ -1636,7 +1645,20 @@ public sealed class VersusBehaviour : MonoBehaviour
                     break;
                 }
 
-                card.ControllerInteract();
+                // The hand card's private select callback is what a real click
+                // fires; ControllerInteract alone does not mark it selected.
+                try
+                {
+                    var select = typeof(Cards.HandCard).GetField("m_OnSelect",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    var callback = select?.GetValue(card);
+                    callback?.GetType().GetMethod("Invoke")?.Invoke(callback, new object[] { card });
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"qa-bot select failed: {e.Message}");
+                }
+
                 target.OnMouseDown?.Invoke();
                 placed++;
               }
@@ -1652,16 +1674,36 @@ public sealed class VersusBehaviour : MonoBehaviour
                 !Core.Wave.Data.Running && !Core.Wave.Data.CombatOn)
             {
                 _qaBattleWave = wave;
-                // QA only: replenish the opponent army each wave so a long
-                // headless run does not empty the board and stall forever.
+                // Do NOT call SpawnWave here: the game already spawns its own
+                // wave army at StartWave. Doubling it made the opponent army
+                // overwhelming and left hundreds of enemies alive after the
+                // local castle fell, which stalled wave completion.
+
+                // Keep a local army alive: once the castle is gone the
+                // opponent troops have no target and combat never ends. QA only.
                 try
                 {
-                    Core.Wave.SpawnWave();
-                    VersusPlugin.Log.LogInfo($"qa-bot: respawned wave {wave} army");
+                    var reinforced = 0;
+                    foreach (var area in UnityEngine.Object.FindObjectsOfType<Core.Kingdoms.KingdomArea>())
+                    {
+                        if (area == null || area.MultiplayerEnemyArea || !area.Unlocked)
+                        {
+                            continue;
+                        }
+
+                        area.AddTroops(4);
+                        reinforced++;
+                        if (reinforced >= 3)
+                        {
+                            break;
+                        }
+                    }
+
+                    VersusPlugin.Log.LogInfo($"qa-bot: reinforced {reinforced} local areas for wave {wave}");
                 }
                 catch (Exception e)
                 {
-                    VersusPlugin.Log.LogWarning($"qa-bot respawn failed: {e.Message}");
+                    VersusPlugin.Log.LogWarning($"qa-bot reinforce failed: {e.Message}");
                 }
 
                 InvokeNativeStartBattle("qa-bot");

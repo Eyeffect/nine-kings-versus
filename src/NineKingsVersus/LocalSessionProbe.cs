@@ -1730,6 +1730,36 @@ internal static class LocalSessionProbe
     }
 
     /// <summary>
+    /// QA-only: load a seeded run through the game's own LoadGame so the placed
+    /// troop areas become real entities. StartNewGame builds a fresh board from
+    /// the king and ignores the snapshot's areas, which left the local army
+    /// empty in headless tests. Production matches never use this path.
+    /// </summary>
+    public static void LoadSeededRun()
+    {
+        try
+        {
+            var snapshot = BuildFreshSnapshot();
+            if (snapshot?.WaveData == null)
+            {
+                VersusPlugin.Log.LogWarning("load-seeded: no snapshot");
+                return;
+            }
+
+            snapshot.WaveData.WaveNumber = 0;
+            snapshot.WaveData.IsMultiplayer = true;
+            snapshot.WaveData.PlayerLifes = 5;
+            var loaded = Core.Wave.LoadGame(snapshot, true, "Gameplay", false);
+            VersusPlugin.Log.LogInfo($"load-seeded: LoadGame returned {loaded}; " +
+                $"troops={snapshot.Areas?.Count ?? -1} wave={snapshot.WaveData.WaveNumber}");
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"load-seeded failed: {(e.InnerException ?? e).Message}");
+        }
+    }
+
+    /// <summary>
     /// Activates the game's native "Multiplayer Screen" (present but inactive in
     /// the Gameplay scene) and populates it with the gauntlet runs. This is the
     /// official enemy-face bar shown at the start of a multiplayer match.
