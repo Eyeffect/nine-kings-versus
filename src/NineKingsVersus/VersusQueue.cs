@@ -17,6 +17,7 @@ public sealed class MatchMessage
     public int AckSeq;
     public int Wave;
     public int Lives;
+    public int EnemyHp;
     public int Loser;
     public int Eliminated;
     public string LivesMap;

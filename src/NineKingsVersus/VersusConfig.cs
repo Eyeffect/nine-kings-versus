@@ -32,6 +32,10 @@ public sealed class VersusConfig
     public bool buildEnemy { get; set; }
     public bool skipIntro { get; set; }
     public bool startBattle { get; set; }
+
+    /// <summary>QA only: seed a starter army from an authentic snapshot so a
+    /// fresh run can fight without a human placing cards.</summary>
+    public bool botArmy { get; set; }
     public bool attachFlow { get; set; } = true;
 
     [JsonIgnore]
@@ -68,6 +72,7 @@ public sealed class VersusConfig
                     config.buildEnemy = loaded.buildEnemy;
                     config.skipIntro = loaded.skipIntro;
                     config.startBattle = loaded.startBattle;
+                    config.botArmy = loaded.botArmy;
                     config.attachFlow = loaded.attachFlow;
                 }
             }
@@ -107,6 +112,7 @@ public sealed class VersusConfig
             case "build-enemy": return buildEnemy;
             case "skip-intro": return skipIntro;
             case "start-battle": return startBattle;
+            case "bot-army": return botArmy;
             case "attach-flow": return attachFlow;
             default: return false;
         }

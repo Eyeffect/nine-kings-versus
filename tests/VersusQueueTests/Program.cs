@@ -235,13 +235,15 @@ internal static class Program
             Check("config unknown flag off", !defaults.HasFlag("does-not-exist"));
 
             var json = "{\"mode\":\"host\",\"peer\":\"192.168.1.5\",\"port\":29000," +
-                       "\"autoStart\":true,\"autoVersus\":true,\"multiBot\":true,\"arena\":true}";
+                       "\"autoStart\":true,\"autoVersus\":true,\"multiBot\":true,\"arena\":true," +
+                       "\"botArmy\":true}";
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, VersusConfig.FileName), json);
             var loaded = VersusConfig.Load(dir);
             Check("config loads values", loaded.mode == "host" && loaded.peer == "192.168.1.5" && loaded.port == 29000 &&
                                         loaded.autoStart && loaded.autoVersus && loaded.multiBot && loaded.arena);
             Check("config IsEnabled maps flags", loaded.HasFlag("auto-versus") && loaded.HasFlag("multi-bot") && loaded.HasFlag("arena"));
             Check("config unlisted switch off", !loaded.HasFlag("native-gauntlet"));
+            Check("bot-army switch maps", loaded.HasFlag("bot-army"));
 
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "native-gauntlet"), "1");
             var withLegacy = VersusConfig.Load(dir);

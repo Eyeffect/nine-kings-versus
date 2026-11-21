@@ -42,14 +42,18 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static int _barrierStartedWave = -1;
     private static int _battleReleasedWave = -1;
     private static int _roundAppliedWave = -1;
+    private static int _lastObservedWave = -1;
     private static int _lastNativeLifeWave = -1;
     private static string _lastNativeLifeReason;
+    private static int _lastEnemyBaseHp = -1;
 
     private static int _verifySamples;
     private float _autoAt = -1f;
     private static bool _configStartDone;
     private static float _attachRetryAt = -1f;
     private float _heartbeatAt = -1f;
+    private float _botArmyAt = -1f;
+    private int _qaBattleWave = -1;
 
     public VersusBehaviour(IntPtr pointer) : base(pointer)
     {
@@ -80,6 +84,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         TrackScene();
         VersusNet.Tick();
         Stage2Pump();
+        QaBotArmy();
         LocalSessionProbe.PumpDiplomatView();
         LocalSessionProbe.PumpEscape();
 
@@ -1493,12 +1498,13 @@ public sealed class VersusBehaviour : MonoBehaviour
 
     public static void OnNativeEnemyBaseDamage(int healthPoints, bool lostLife)
     {
-        if (!BarrierActive || !lostLife)
+        if (!BarrierActive)
         {
             return;
         }
 
-        VersusPlugin.Log.LogInfo($"native-life: enemy base lost a life, hp={healthPoints}");
+        _lastEnemyBaseHp = healthPoints;
+        VersusPlugin.Log.LogInfo($"native-life: enemy base damage hp={healthPoints} lostLife={lostLife}");
     }
 
     /// <summary>
@@ -1520,9 +1526,138 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         VersusNet.SetLocalLives(lives);
-        VersusNet.SendWaveEnd(wave, lives);
+        var enemyHp = ReadEnemyBaseHp();
+        VersusNet.SendWaveEnd(wave, lives, enemyHp);
         var reason = _lastNativeLifeWave == wave ? _lastNativeLifeReason : "none";
-        VersusPlugin.Log.LogInfo($"native-result: wave {wave} ended, lives={lives}, lifeLoss={reason}");
+        VersusPlugin.Log.LogInfo($"native-result: wave {wave} ended, lives={lives}, enemyHp={enemyHp}, lifeLoss={reason}");
+    }
+
+    /// <summary>
+    /// In a multiplayer run the game writes base damage to the opponent's
+    /// MultiplayerRunData.currentHP via ReceivedMultiplayerEnemyBaseDamage.
+    /// Read that native value instead of inferring a result from timers or kills.
+    /// </summary>
+    private static int ReadEnemyBaseHp()
+    {
+        try
+        {
+            if (_lastEnemyBaseHp >= 0)
+            {
+                return _lastEnemyBaseHp;
+            }
+
+            var session = MultiplayerSystems.MultiplayerManager.Session;
+            var runs = session?.GauntletEnemies;
+            if (runs == null)
+            {
+                return -1;
+            }
+
+            var lowest = int.MaxValue;
+            foreach (var run in runs)
+            {
+                if (run == null)
+                {
+                    continue;
+                }
+
+                var hp = run.currentHP;
+                if (hp >= 0 && hp < lowest)
+                {
+                    lowest = hp;
+                }
+            }
+
+            return lowest == int.MaxValue ? -1 : lowest;
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"native-result: enemy HP read failed: {e.Message}");
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// QA-only bot: places the starting hand through the game's own card and
+    /// area callbacks so a headless test run has troops to fight with. Off in
+    /// every production configuration; never clears the hand or forces combat.
+    /// </summary>
+    private void QaBotArmy()
+    {
+        if (VersusConfig.Current?.HasFlag("bot-army") != true ||
+            _lastScene != "Gameplay" || Core.Wave.Data == null)
+        {
+            return;
+        }
+
+        if (_botArmyAt < 0f)
+        {
+            _botArmyAt = Time.time + 1f;
+        }
+
+        if (Time.time < _botArmyAt || Core.Wave.Data.Running || Core.Wave.Data.CombatOn)
+        {
+            return;
+        }
+
+        _botArmyAt = Time.time + 2f;
+        try
+        {
+            var hand = GameplayInterface.GameplayUI.HandCards;
+            var cards = hand?.Cards;
+            var areas = UnityEngine.Object.FindObjectsOfType<Core.Kingdoms.KingdomArea>();
+            var placed = 0;
+            if (cards != null)
+            {
+              foreach (var card in cards)
+              {
+                if (placed >= 3 || card?.Card?.IsTroop != true)
+                {
+                    continue;
+                }
+
+                Core.Kingdoms.KingdomArea target = null;
+                foreach (var area in areas)
+                {
+                    if (area != null && !area.MultiplayerEnemyArea && area.Unlocked &&
+                        !area.HasPlaced)
+                    {
+                        target = area;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    break;
+                }
+
+                card.ControllerInteract();
+                target.OnMouseDown?.Invoke();
+                placed++;
+              }
+            }
+
+            if (placed > 0)
+            {
+                VersusPlugin.Log.LogInfo($"qa-bot: placed {placed} cards; remaining={hand.CardsCount}");
+            }
+
+            var wave = Core.Wave.Data.Wave;
+            if (wave >= 0 && _qaBattleWave != wave && VersusNet.GoWave >= wave &&
+                !Core.Wave.Data.Running && !Core.Wave.Data.CombatOn)
+            {
+                _qaBattleWave = wave;
+                InvokeNativeStartBattle("qa-bot");
+                // The attached run needs the game's documented second press to
+                // clear the spawn wait. QA-only: never used outside bot-army.
+                _secondBattleAt = Time.time + 0.6f;
+            }
+        }
+        catch (Exception e)
+        {
+            VersusPlugin.Log.LogWarning($"qa-bot failed: {(e.InnerException ?? e).Message}");
+        }
     }
 
     /// <summary>Releases a held native Start Battle call once go is available.</summary>
@@ -1534,6 +1669,21 @@ public sealed class VersusBehaviour : MonoBehaviour
         }
 
         var wave = Core.Wave.Data?.Wave ?? -1;
+        // The game sometimes advances the wave counter without calling EndWave
+        // in an attached offline run. Read the native result at the wave
+        // boundary from the game's own life counter instead: no timer, no parity,
+        // just the value the game itself arrived at.
+        if (wave >= 0 && wave != _lastObservedWave)
+        {
+            if (_lastObservedWave >= 0)
+            {
+                OnWaveEnded(_lastObservedWave);
+            }
+
+            _lastObservedWave = wave;
+            OnWaveStarted(wave);
+        }
+
         if (wave >= 0 && _startBattleHeld && _battleReleasedWave != wave &&
             VersusNet.GoWave >= wave)
         {
@@ -1872,8 +2022,10 @@ public sealed class VersusBehaviour : MonoBehaviour
         _barrierStartedWave = -1;
         _battleReleasedWave = -1;
         _roundAppliedWave = -1;
+        _lastObservedWave = -1;
         _lastNativeLifeWave = -1;
         _lastNativeLifeReason = null;
+        _lastEnemyBaseHp = -1;
 
         VersusNet.ResetMatchState();
     }

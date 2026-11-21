@@ -34,6 +34,7 @@ internal static class VersusNet
         public int wave { get; set; }
         public string snapshot { get; set; }
         public int lives { get; set; } = -1;
+        public int enemyHp { get; set; } = -1;
         public int loser { get; set; } = -1;
         public int eliminated { get; set; } = -1;
         public string livesMap { get; set; }
@@ -237,7 +238,23 @@ internal static class VersusNet
                     if (Mode == "host")
                     {
                         Barrier.MarkLife(message.PlayerId, message.Wave, message.Lives);
-                        VersusPlugin.Log.LogInfo($"net: waveend p{message.PlayerId} wave={message.Wave} lives={message.Lives}");
+                        // The opponent army damages the opponent's base in the
+                        // game's own multiplayer run data. Mirror that native HP
+                        // onto the other player's match life.
+                        if (message.EnemyHp >= 0)
+                        {
+                            foreach (var id in Barrier.Alive)
+                            {
+                                if (id != message.PlayerId)
+                                {
+                                    Barrier.SetLives(id, message.EnemyHp);
+                                    break;
+                                }
+                            }
+                        }
+
+                        VersusPlugin.Log.LogInfo($"net: waveend p{message.PlayerId} wave={message.Wave} " +
+                            $"lives={message.Lives} enemyHp={message.EnemyHp}");
                         TryBroadcastRound(message.Wave);
                     }
                     break;
@@ -311,17 +328,28 @@ internal static class VersusNet
     }
 
     /// <summary>Report the native life count at the end of a wave.</summary>
-    public static void SendWaveEnd(int wave, int lives)
+    public static void SendWaveEnd(int wave, int lives, int enemyHp = -1)
     {
         LocalLives = lives;
         if (Mode == "host")
         {
             Barrier.MarkLife(LocalPlayerId, wave, lives);
+            if (enemyHp >= 0)
+            {
+                foreach (var id in Barrier.Alive)
+                {
+                    if (id != LocalPlayerId)
+                    {
+                        Barrier.SetLives(id, enemyHp);
+                    }
+                }
+            }
+
             TryBroadcastRound(wave);
             return;
         }
 
-        Send(new Message { type = "waveend", wave = wave, lives = lives });
+        Send(new Message { type = "waveend", wave = wave, lives = lives, enemyHp = enemyHp });
     }
 
     private static void TryBroadcastRound(int wave)
@@ -472,6 +500,7 @@ internal static class VersusNet
                 AckSeq = root.TryGetProperty("ack", out var ack) ? ack.GetInt32() : 0,
                 Wave = root.TryGetProperty("wave", out var wave) ? wave.GetInt32() : -1,
                 Lives = root.TryGetProperty("lives", out var lives) ? lives.GetInt32() : -1,
+                EnemyHp = root.TryGetProperty("enemyHp", out var enemyHp) ? enemyHp.GetInt32() : -1,
                 Loser = root.TryGetProperty("loser", out var loser) ? loser.GetInt32() : -1,
                 Eliminated = root.TryGetProperty("eliminated", out var eliminated) ? eliminated.GetInt32() : -1,
                 LivesMap = root.TryGetProperty("livesMap", out var map) ? map.GetString() : null,

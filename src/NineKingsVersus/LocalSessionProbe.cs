@@ -1625,6 +1625,72 @@ internal static class LocalSessionProbe
             }
         }
 
+        // QA only: a fresh match starts with an empty board, so neither side has
+        // an army to fight with and EndWave never fires. The bot-army flag copies
+        // real troop areas from an authentic snapshot into the unlocked plots;
+        // production matches leave this off and the players place their own cards.
+        if (VersusConfig.Current?.HasFlag("bot-army") == true)
+        {
+            try
+            {
+                var path = Path.Combine(VersusPlugin.DataDir, "bot-army-path.txt");
+                var sourcePath = File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+                if (!string.IsNullOrEmpty(sourcePath) && File.Exists(sourcePath))
+                {
+                    var source = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot>(
+                        File.ReadAllText(sourcePath));
+                    var seedTroops = new System.Collections.Generic.List<Gameplay.GameSnapshot.AreaSnapshot>();
+                    if (source?.Areas != null)
+                    {
+                        foreach (var area in source.Areas)
+                        {
+                            if (area != null && area.PlacedEntityType == "Troop" &&
+                                !string.IsNullOrEmpty(area.PlacedCardName))
+                            {
+                                seedTroops.Add(area);
+                            }
+                        }
+                    }
+
+                    var slots = new System.Collections.Generic.List<int>();
+                    for (var i = 0; i < fresh.Areas.Count; i++)
+                    {
+                        var area = fresh.Areas[i];
+                        if (area.IsUnlocked && area.PlacedEntityType != "Castle")
+                        {
+                            slots.Add(i);
+                        }
+                    }
+
+                    var placed = 0;
+                    foreach (var index in slots)
+                    {
+                        if (placed >= seedTroops.Count)
+                        {
+                            break;
+                        }
+
+                        var troop = seedTroops[placed++];
+                        var clone = Newtonsoft.Json.JsonConvert.DeserializeObject<Gameplay.GameSnapshot.AreaSnapshot>(
+                            Newtonsoft.Json.JsonConvert.SerializeObject(troop));
+                        clone.XCoordinate = fresh.Areas[index].XCoordinate;
+                        clone.YCoordinate = fresh.Areas[index].YCoordinate;
+                        fresh.Areas[index] = clone;
+                    }
+
+                    VersusPlugin.Log.LogInfo($"bot-army: seeded {placed} troop areas from {Path.GetFileName(sourcePath)}");
+                }
+                else
+                {
+                    VersusPlugin.Log.LogWarning("bot-army: bot-army-path.txt missing or invalid");
+                }
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"bot-army: seeding failed: {e.Message}");
+            }
+        }
+
         if (fresh.HandCards?.Cards != null)
         {
             fresh.HandCards.Cards.Clear();

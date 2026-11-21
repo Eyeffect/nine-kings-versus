@@ -404,12 +404,16 @@ Implemented (code + no-game tests, build green):
 - The 12 s timeout, `DecideWaveLoser`, `UnitsKilled` comparison and `wave % 2` were removed. A round resolves only when every alive player reports the life count at the game's own `EndWave`; the host broadcasts a life table and every client applies eliminations from it. `ApplyMatchResult` now calls only `OnCompleteGame` — no `SetLife`, `SetRunning` or console commands.
 - Native life-loss observation confirmed from the decompile: `PlayerBase.ReceivedLethalDamage` (`0x1806CAFE0`) branches on `PlayerBase._multiplayerEnemyBase`; for the player's own base it starts `ReceivedDamage` and the game decrements `Core.PlayerLife.Instance.HealthPoints`. `ReceivedMultiplayerEnemyBaseDamage(int healthPoints, bool lostLife)` (`0x1806CB4E0`) is the enemy-base branch and decrements `MultiplayerRunData.currentHP`. We patch both only as Postfix observers; the game owns every write.
 
-Two-process loopback validation (disposable copies, `wave-begin` + `start-battle` probe flags):
+Two-process loopback validation (disposable copies, QA-only `bot-army` configuration):
 - Both peers reached wave 0, sent `ready`, host logged `net: ready p1 wave=0 (2/2)` and `net: go broadcast for wave 0`.
 - Both peers logged `barrier: go for wave 0; releasing native StartCombat`, then `StartCombat in: instant=True wave=0`. The barrier is verified.
+- The QA bot seeds troop areas from an authentic snapshot and presses the game's own Start Battle each wave (flag `bot-army`, off in production). This produced real armies (`entities=109`, `bots: installed 4 distinct bot decks`) and the first native life changes.
+- Because attached runs do not always call `EndWave`, the result is also read at the native wave boundary from `Core.PlayerLife.Instance.HealthPoints` and from the opponent's `MultiplayerRunData.currentHP` (the value written by `ReceivedMultiplayerEnemyBaseDamage`). No timer, kill count or parity is involved.
+- Verified 7 synchronized rounds (0–6): both peers reported `waveend` with the game's own life values, the host broadcast the same life table (`net: round 5 resolved, lives=0:3,1:4`), both applied it (`native-result: round 5 applied, lives=p0:3,p1:4, eliminated=[], alive=2`), and `ready/go` repeated for each following wave. Lives genuinely fell from 5 to 2/4 over those rounds.
 
-Blocked / unknown (do not claim Stage 2 done):
-- The official 20-round criterion is NOT met. With a fresh empty board (or the backup wave-32 run) combat stalls: `verify ... entities=1 player=0 enemy=1`, no `EndWave`, no life loss, so `OnWaveEnded` never fires and the round life table is never produced. `SpawnWave` is repeated by the game, adding enemy areas each time (known issue #3).
-- `bots: installed 0 distinct bot decks`: a fresh snapshot has no troop cards. A starter-troop fallback was tried (`Game.GetTroop` with catalog names, then `PlayerDeck.GroupArray`) but did not resolve cards; it was removed instead of being left as an unverified shortcut. Supplying real opponent armies for the first wave is still open.
-- With `load-backup`, the loaded run reported `wave=32` but `Gameplay` started at `wave=0` with `multiplayer=True`; `EndWave` threw `During invoking native->managed trampoline` before the life path could be exercised.
+Still open (do not claim Stage 2 done):
+- The official 20-round criterion is NOT met. The loop stalls around wave 9–10 because the game does not reliably re-enter combat in the attached run with the QA driver; rounds 7+ were not resolved in the tested window.
+- No elimination / `OnCompleteGame` end screen was reached: neither side's life hit 0 in the validated window.
+- Wave numbers occasionally drift between the two copies (e.g. a late `ready p1 wave=3` after wave 4), so some rounds were skipped by the host's round resolution. The N-wave convergence needs a dedicated fix in the next pass.
 - No 3-process game test yet; the N-player transport is validated only by the no-game suite.
+- The QA bot uses the game's documented second Start Battle press (with hand clearing) via the legacy probe path. It is flag-gated and never active in a production config, but Stage 3 must still remove that probe path from the shipped flow.
