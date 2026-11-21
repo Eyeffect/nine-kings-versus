@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using Il2CppInterop.Runtime.Injection;
@@ -28,22 +29,21 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static bool _attachDone;
     private static float _verifyAt = -1f;
     private static float _secondBattleAt = -1f;
-    private static float _handTrimAt = -1f;
     private static float _diagAt = -1f;
     private static float _syncAt = -1f;
     private static int _lastSyncedTo = -1;
     private static int _arenaLocalWave = -1;
     private static int _lastNetStateVersion;
-    private static int _handshakeWave = -1;
-    private static bool _readySent;
-    private static bool _goSent;
-    private static bool _autoStarted;
     private static bool _resultHandled;
-    private static int _localEliminatedWave = -1;
-    private static float _combatSince = -1f;
-    private static int _combatSinceWave = -1;
-    private static int _waveResolvedWave = -1;
-    private static float _nextWaveAt = -1f;
+
+    // Stage 2: the native Start Battle call is held until every player is
+    // ready and the host has sent go. Nothing clears the hand or forces combat.
+    private static bool _startBattleHeld;
+    private static int _barrierStartedWave = -1;
+    private static int _battleReleasedWave = -1;
+    private static int _roundAppliedWave = -1;
+    private static int _lastNativeLifeWave = -1;
+    private static string _lastNativeLifeReason;
 
     private static int _verifySamples;
     private float _autoAt = -1f;
@@ -79,6 +79,7 @@ public sealed class VersusBehaviour : MonoBehaviour
     {
         TrackScene();
         VersusNet.Tick();
+        Stage2Pump();
         LocalSessionProbe.PumpDiplomatView();
         LocalSessionProbe.PumpEscape();
 
@@ -473,34 +474,12 @@ public sealed class VersusBehaviour : MonoBehaviour
                     $"entities={entities?.Length ?? 0} players={players} enemies={enemies} multiplayer={multiplayer} " +
                     $"arenaSpawned={OpponentDeck.LastBattlers} arenaWave={OpponentDeck.LastWave} " +
                     $"lives={VersusNet.LocalLives}/{VersusNet.PeerLives} states={VersusNet.StateVersion} " +
-                    $"resultHandled={_resultHandled} eliminatedWave={_localEliminatedWave} " +
+                    $"resultHandled={_resultHandled} phase={Match.Phase} " +
                     $"waveEnemies={Core.Wave.Enemies?.Count.ToString() ?? "null"} validTroops={Core.Wave.ValidTroops?.Count ?? -1}");
             }
             catch (Exception e)
             {
                 VersusPlugin.Log.LogWarning($"diag failed: {e.Message}");
-            }
-        }
-
-        // The game re-issues rewards when StartWave is repeated; keep the hand from
-        // flooding so combat remains playable in arena mode.
-        if (_lastScene == "Gameplay" && Time.time >= _handTrimAt &&
-            (VersusConfig.Current?.HasFlag("arena") == true ||
-             VersusConfig.Current?.HasFlag("custom-deck") == true))
-        {
-            _handTrimAt = Time.time + 4f;
-            try
-            {
-                var hand = GameplayInterface.GameplayUI.HandCards;
-                if (hand != null && hand.CardsCount > 2)
-                {
-                    VersusPlugin.Log.LogInfo($"arena: trimming flooded hand from {hand.CardsCount} to 0");
-                    hand.Clear();
-                }
-            }
-            catch (Exception e)
-            {
-                VersusPlugin.Log.LogWarning($"arena hand trim failed: {e.Message}");
             }
         }
 
@@ -620,21 +599,9 @@ public sealed class VersusBehaviour : MonoBehaviour
             BeginVersusBattle("start-battle");
         }
 
-        // Auto-starting the battle used to clear the hand the instant a wave began,
-        // so the player could never place a card. Combat is now started by the game's
-        // own Start Battle button; the ready/go state is still exchanged for sync.
-        if (_lastScene == "Gameplay" && Core.Wave.Data != null && Core.Wave.Data.Wave >= 0
-            && VersusConfig.Current?.HasFlag("auto-versus") == true && VersusNet.Connected)
-        {
-            AutoVersusStep(Core.Wave.Data.Wave);
-        }
-
-        if (VersusNet.Connected && _lastScene == "Gameplay" && Core.Wave.Data != null
-            && (VersusConfig.Current?.HasFlag("auto-versus") == true ||
-                VersusConfig.Current?.HasFlag("arena") == true))
-        {
-            MatchResultStep();
-        }
+        // Stage 2: readiness is announced from WaveStart, the native Start Battle
+        // call is held by a prefix until go, and the round result comes from the
+        // game's own end-of-wave life report. No timer, no hand clearing, no parity.
 
         // wave-begin: use the hand UI's own Wave_Begin hook after satisfying the
         // hand-card gate (<=2 cards, 0 on final round).
@@ -1422,9 +1389,9 @@ public sealed class VersusBehaviour : MonoBehaviour
     }
 
     /// <summary>
-    /// Presses the game's own Start Battle button (clearing the hand first so the
-    /// <=2-card gate is satisfied) and schedules the second press that actually
-    /// begins combat.
+    /// Probe-only helper for the legacy start-battle flag: press the game's own
+    /// Start Battle button without touching the hand or forcing combat. The
+    /// native StartCombat barrier still applies.
     /// </summary>
     private static void BeginVersusBattle(string reason)
     {
@@ -1433,310 +1400,269 @@ public sealed class VersusBehaviour : MonoBehaviour
             return;
         }
 
+        InvokeNativeStartBattle(reason);
+        ScheduleVerification(10);
+    }
+
+    /// <summary>
+    /// True while a versus match uses the native battle-start barrier.
+    /// </summary>
+    private static bool BarrierActive =>
+        VersusConfig.Current?.HasFlag("auto-versus") == true &&
+        VersusNet.Connected && !_resultHandled && Core.Wave.Data != null &&
+        (_lastScene == "Gameplay" || _lastScene == "YearShowcase");
+
+    /// <summary>
+    /// Harmony prefix on Core.Wave.StartCombat. The player presses the native
+    /// Start Battle button as usual; its UI/state work is done, but combat does
+    /// not begin until every alive player is ready and the host sent go.
+    /// </summary>
+    public static bool MayStartCombat()
+    {
+        if (!BarrierActive)
+        {
+            return true;
+        }
+
+        var wave = Core.Wave.Data?.Wave ?? -1;
+        if (wave < 0 || _battleReleasedWave == wave)
+        {
+            return true;
+        }
+
+        if (VersusNet.GoWave >= wave)
+        {
+            _battleReleasedWave = wave;
+            VersusPlugin.Log.LogInfo($"barrier: go for wave {wave}; releasing native StartCombat");
+            return true;
+        }
+
+        return false;
+    }
+
+    public static void OnCombatHeld()
+    {
+        if (_startBattleHeld)
+        {
+            return;
+        }
+
+        _startBattleHeld = true;
+        var wave = Core.Wave.Data?.Wave ?? -1;
+        VersusPlugin.Log.LogInfo($"barrier: Start Battle held at wave {wave}; waiting for go");
+    }
+
+    /// <summary>
+    /// Called by the StartWave postfix: one barrier per wave, announced to the
+    /// other players. The game keeps running its own rewards and shop.
+    /// </summary>
+    public static void OnWaveStarted(int wave)
+    {
+        if (!BarrierActive || wave < 0 || _barrierStartedWave == wave)
+        {
+            return;
+        }
+
+        _barrierStartedWave = wave;
+        _startBattleHeld = false;
+        _battleReleasedWave = -1;
+        VersusNet.BeginWave(wave);
+        Match.BeginRound(wave);
+        VersusNet.SendReady(wave);
+        VersusPlugin.Log.LogInfo($"barrier: wave {wave} started, ready sent " +
+            $"(mode={VersusNet.Mode}, go={VersusNet.GoWave})");
+    }
+
+    /// <summary>
+    /// Native life-loss observation. We never call SetLife, but we record that
+    /// the game itself reported a breach so the round result is traceable.
+    /// </summary>
+    public static void OnNativeLifeLoss(string reason)
+    {
+        if (!BarrierActive)
+        {
+            return;
+        }
+
+        var wave = Core.Wave.Data?.Wave ?? -1;
+        var lives = Core.PlayerLife.Instance?.HealthPoints ?? -1;
+        _lastNativeLifeWave = wave;
+        _lastNativeLifeReason = reason;
+        VersusPlugin.Log.LogInfo($"native-life: {reason} at wave {wave}, lives={lives}");
+    }
+
+    public static void OnNativeEnemyBaseDamage(int healthPoints, bool lostLife)
+    {
+        if (!BarrierActive || !lostLife)
+        {
+            return;
+        }
+
+        VersusPlugin.Log.LogInfo($"native-life: enemy base lost a life, hp={healthPoints}");
+    }
+
+    /// <summary>
+    /// Wave end is the game's own result event: by now it has applied any life
+    /// loss. Each client reports the live life count; the host collects all
+    /// reports before resolving the round. No timeout and no wave parity.
+    /// </summary>
+    public static void OnWaveEnded(int wave)
+    {
+        if (!BarrierActive || wave < 0)
+        {
+            return;
+        }
+
+        var lives = Core.PlayerLife.Instance?.HealthPoints ?? -1;
+        if (lives < 0)
+        {
+            lives = VersusNet.LocalLives;
+        }
+
+        VersusNet.SetLocalLives(lives);
+        VersusNet.SendWaveEnd(wave, lives);
+        var reason = _lastNativeLifeWave == wave ? _lastNativeLifeReason : "none";
+        VersusPlugin.Log.LogInfo($"native-result: wave {wave} ended, lives={lives}, lifeLoss={reason}");
+    }
+
+    /// <summary>Releases a held native Start Battle call once go is available.</summary>
+    private static void Stage2Pump()
+    {
+        if (!BarrierActive)
+        {
+            return;
+        }
+
+        var wave = Core.Wave.Data?.Wave ?? -1;
+        if (wave >= 0 && _startBattleHeld && _battleReleasedWave != wave &&
+            VersusNet.GoWave >= wave)
+        {
+            _battleReleasedWave = wave;
+            _startBattleHeld = false;
+            try
+            {
+                Core.Wave.StartCombat(false);
+                VersusPlugin.Log.LogInfo($"go-release: resumed native StartCombat for wave {wave}");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"go-release failed: {(e.InnerException ?? e).Message}");
+            }
+        }
+
+        if (VersusNet.RoundWave > _roundAppliedWave && VersusNet.RoundWave >= 0)
+        {
+            ApplyRound(VersusNet.RoundWave, VersusNet.RoundLives);
+        }
+    }
+
+    private static void InvokeNativeStartBattle(string reason)
+    {
         try
         {
-            var data = Core.Wave.Data;
-            var hand = GameplayInterface.GameplayUI.HandCards;
             var view = UnityEngine.Object.FindObjectOfType<Core.GameplayUI_PlacingView>();
-            VersusPlugin.Log.LogInfo($"{reason}: view={(view == null ? "null" : "found")} " +
-                $"startState={view?.GetStartState().ToString() ?? "n/a"} wave={data?.Wave} cards={hand?.CardsCount.ToString() ?? "n/a"} " +
-                $"running={data?.Running} combatOn={data?.CombatOn} waitingToBegin={data?.WaitingToBegin}");
-
-            if (hand != null && hand.CardsCount > 0)
-            {
-                hand.Clear();
-            }
-
-            if (view == null)
-            {
-                VersusPlugin.Log.LogWarning($"{reason}: no placing view found");
-                return;
-            }
-
             var method = typeof(Core.GameplayUI_PlacingView).GetMethod("StartBattle",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
-            method?.Invoke(view, null);
-            VersusPlugin.Log.LogInfo($"{reason}: StartBattle invoked (method={method != null}); " +
-                $"running={data?.Running} combatOn={data?.CombatOn} waitingToBegin={data?.WaitingToBegin} cards={hand?.CardsCount.ToString() ?? "n/a"}");
-            // The game's own notes show StartBattle must be pressed twice: the
-            // first stages/spawns, the second actually engages combat. Keep the
-            // gap short so the game cannot auto-complete the wave in between.
-            _secondBattleAt = Time.time + 0.6f;
-            ScheduleVerification(10);
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (view == null || method == null)
+            {
+                VersusPlugin.Log.LogWarning($"{reason}: native StartBattle not available");
+                return;
+            }
+
+            method.Invoke(view, null);
+            VersusPlugin.Log.LogInfo($"{reason}: native StartBattle invoked for wave {Core.Wave.Data?.Wave}");
         }
         catch (Exception e)
         {
-            VersusPlugin.Log.LogWarning($"{reason} failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
+            VersusPlugin.Log.LogWarning($"{reason} failed: {(e.InnerException ?? e).Message}");
         }
     }
 
     /// <summary>
-    /// Host is the start authority: both peers announce readiness for the current
-    /// wave, then the host sends go and both press Start Battle.
+    /// Applies the host's life table for one round. Eliminations are decided by
+    /// the game's own life counts; placement follows base-fall time (last to fall
+    /// ranks higher), which for a simultaneous round means the order is stable.
     /// </summary>
-    private static void AutoVersusStep(int wave)
+    private static void ApplyRound(int wave, IReadOnlyDictionary<int, int> lives)
     {
-        if (_resultHandled)
+        _roundAppliedWave = wave;
+        if (lives == null || lives.Count == 0)
         {
             return;
         }
 
-        var data = Core.Wave.Data;
-        if (data == null || data.Running || data.CombatOn)
+        var eliminated = new System.Collections.Generic.List<int>();
+        foreach (var pair in lives)
+        {
+            if (pair.Value <= 0)
+            {
+                eliminated.Add(pair.Key);
+            }
+        }
+
+        var lowestId = -1;
+        var lowestLives = int.MaxValue;
+        foreach (var pair in lives)
+        {
+            if (pair.Value < lowestLives)
+            {
+                lowestLives = pair.Value;
+                lowestId = pair.Key;
+            }
+        }
+
+        Match.ResolveRound(lowestId, false);
+        foreach (var id in eliminated)
+        {
+            Match.RemovePlayer(id);
+        }
+
+        VersusPlugin.Log.LogInfo($"native-result: round {wave} applied, lives={FormatLives(lives)}, " +
+            $"eliminated=[{string.Join(",", eliminated)}], alive={Match.AlivePlayers}, phase={Match.Phase}");
+
+        var localId = VersusNet.LocalPlayerId;
+        if (!lives.TryGetValue(localId, out var myLives))
         {
             return;
-        }
-
-        if (_handshakeWave != wave)
-        {
-            _handshakeWave = wave;
-            _readySent = false;
-            _goSent = false;
-            _autoStarted = false;
-            VersusPlugin.Log.LogInfo($"auto-versus: new wave {wave}, mode={VersusNet.Mode}, peerReady={VersusNet.PeerReadyWave}");
-        }
-
-        if (!_readySent)
-        {
-            _readySent = true;
-            VersusNet.SendReady(wave);
-        }
-
-        // The host gates on the peer's ready, then sends `go`. The join treats
-        // `go` as authoritative and does not wait for a separate ready echo:
-        // requiring it made the join miss the host's wave and fight one behind,
-        // so the life comparison rewarded the idle side.
-        bool shouldStart;
-        if (VersusNet.Mode == "host")
-        {
-            if (VersusNet.PeerReadyWave != wave || VersusNet.StateVersion < 1)
-            {
-                return;
-            }
-
-            if (!_goSent)
-            {
-                _goSent = true;
-                VersusNet.SendGo(wave);
-            }
-
-            shouldStart = _goSent;
-        }
-        else
-        {
-            // The join can load one wave ahead of the host (the attached run's
-            // snapshot series advances on attach). Start on any go rather than
-            // requiring an exact wave match; ResultPending freezes the wave once
-            // combat engages, so both peers then settle on their current wave.
-            shouldStart = VersusNet.GoWave > 0 && VersusNet.StateVersion > 0;
-        }
-
-        if (shouldStart && !_autoStarted)
-        {
-            _autoStarted = true;
-            // Do not invoke StartBattle: the game's own button must stay usable so
-            // the player can place cards before combat. This only marks readiness.
-            VersusPlugin.Log.LogInfo($"auto-versus: both ready for wave {wave}; awaiting player Start Battle");
-        }
-    }
-
-    /// <summary>
-    /// Host-authoritative match result: the first life-count difference decides
-    /// the match (the peer with fewer lives loses). The result is sent to both
-    /// peers so they cannot declare separate victories.
-    /// </summary>
-    private static void MatchResultStep()
-    {
-        try
-        {
-            var myLives = VersusNet.LocalLives;
-            var peerLives = VersusNet.PeerLives;
-            var wave = Core.Wave.Data?.Wave ?? -1;
-
-            // Arena result: the side whose opponent army was wiped out loses.
-            var liveEnemies = 0;
-            var entities = UnityEngine.Object.FindObjectsOfType<Core.Entities.Entity>();
-            if (entities != null)
-            {
-                foreach (var entity in entities)
-                {
-                    try
-                    {
-                        if (entity != null && entity.IsEnemy)
-                        {
-                            liveEnemies++;
-                        }
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
-
-            if (!_resultHandled && wave > 0 && OpponentDeck.LastWave == wave &&
-                OpponentDeck.LastBattlers > 0 && liveEnemies <= 3 &&
-                (Core.Wave.Data?.CombatOn ?? false) &&
-                _localEliminatedWave != wave)
-            {
-                _localEliminatedWave = wave;
-                VersusPlugin.Log.LogInfo($"arena: opponent army eliminated locally at wave {wave}");
-
-                if (VersusNet.Mode == "host")
-                {
-                    _resultHandled = true;
-                    VersusNet.SendResult(1);
-                    ApplyMatchResult(1);
-                    return;
-                }
-
-                VersusNet.SendEliminated(wave);
-            }
-
-            if (false && VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
-                VersusNet.PeerEliminatedWave == wave)
-            {
-                _resultHandled = true;
-                VersusPlugin.Log.LogInfo($"arena: peer eliminated at wave {wave}, host loses");
-                VersusNet.SendResult(0);
-                ApplyMatchResult(0);
-                return;
-            }
-
-            var combatOn = Core.Wave.Data?.CombatOn ?? false;
-            if (combatOn && _combatSinceWave != wave)
-            {
-                _combatSinceWave = wave;
-                _combatSince = Time.time;
-                VersusPlugin.Log.LogInfo($"wave-loop: combat engaged at wave {wave}");
-            }
-
-            // Resolve a wave after a grace period. The attached session's combat can
-            // stall with no life change, so the host decides from the life counters
-            // (falling back to snapshot kills, then a deterministic alternation) and
-            // broadcasts the wave loser to both peers.
-            if (VersusNet.Mode == "host" && !_resultHandled && wave > 0 &&
-                _combatSince > 0f && Time.time - _combatSince >= 12f &&
-                _waveResolvedWave != wave && VersusNet.StateVersion > 0)
-            {
-                var loser = DecideWaveLoser(myLives, peerLives, wave);
-                _waveResolvedWave = wave;
-                VersusNet.SendWaveWin(wave, loser);
-                ApplyWaveWin(wave, loser);
-                return;
-            }
-
-            // The join applies the host's wave decision for this wave.
-            if (VersusNet.Mode == "join" && !_resultHandled && wave > 0 &&
-                VersusNet.WaveWinWave == wave && _waveResolvedWave != wave)
-            {
-                _waveResolvedWave = wave;
-                ApplyWaveWin(wave, VersusNet.WaveWinLoser);
-                return;
-            }
-
-            // Do NOT force the wave forward: the game's own wave completion runs
-            // the shop/rewards and rebuilds the placing view. Forcing SetWave here
-            // skipped the shop and left no placing view (softlock). Waves advance
-            // naturally; peers are kept together by the snapshot/board exchange.
-
-            if (VersusNet.Mode == "join" && VersusNet.ResultLoser >= 0 && !_resultHandled)
-            {
-                ApplyMatchResult(VersusNet.ResultLoser);
-            }
-        }
-        catch (Exception e)
-        {
-            VersusPlugin.Log.LogWarning($"match-result failed: {e.GetType().Name}: {e.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Picks the loser of one wave. Real life loss wins; otherwise compare the
-    /// units each side killed in their snapshots, then fall back to a stable
-    /// wave-based alternation. The host computes it and both peers apply it.
-    /// </summary>
-    private static int DecideWaveLoser(int myLives, int peerLives, int wave)
-    {
-        if (myLives >= 0 && peerLives >= 0 && myLives != peerLives)
-        {
-            return myLives < peerLives ? 0 : 1;
-        }
-
-        var localJson = LatestLocalSnapshot();
-        if (!string.IsNullOrEmpty(localJson) && !string.IsNullOrEmpty(VersusNet.OpponentSnapshotJson))
-        {
-            var mine = SnapshotKills(localJson);
-            var theirs = SnapshotKills(VersusNet.OpponentSnapshotJson);
-            if (mine >= 0 && theirs >= 0 && mine != theirs)
-            {
-                return mine < theirs ? 0 : 1;
-            }
-        }
-
-        // Stable tiebreak: host loses even waves, join loses odd waves.
-        return wave % 2 == 0 ? 0 : 1;
-    }
-
-    private static int SnapshotKills(string json)
-    {
-        try
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(json);
-            if (document.RootElement.TryGetProperty("WaveData", out var waveData) &&
-                waveData.TryGetProperty("UnitsKilled", out var killed))
-            {
-                return killed.GetInt32();
-            }
-        }
-        catch
-        {
-        }
-
-        return -1;
-    }
-
-    /// <summary>
-    /// Applies a resolved wave on this peer: decrement the loser's life counter
-    /// and either end the match or schedule the next wave.
-    /// </summary>
-    private static void ApplyWaveWin(int wave, int loser)
-    {
-        var host = VersusNet.Mode == "host";
-        var myLives = VersusNet.LocalLives;
-        var peerLives = VersusNet.PeerLives;
-
-        if (loser == 0)
-        {
-            if (host) myLives--; else peerLives--;
-        }
-        else
-        {
-            if (host) peerLives--; else myLives--;
         }
 
         VersusNet.SetLocalLives(myLives);
-        VersusNet.SetPeerLives(peerLives);
-        Match.ResolveRound(loser);
-        VersusPlugin.Log.LogInfo(
-            $"wave-loop: wave {wave} resolved, loser={(loser == 0 ? "host" : "join")} " +
-            $"lives={myLives}/{peerLives} (local/peer) phase={Match.Phase}");
-
-        if (myLives <= 0 || peerLives <= 0)
+        if (myLives <= 0)
         {
-            var matchLoser = myLives <= 0 ? (host ? 0 : 1) : (host ? 1 : 0);
-            _resultHandled = true;
-            VersusPlugin.Log.LogInfo($"wave-loop: match over, loser={(matchLoser == 0 ? "host" : "join")}");
-            if (host)
-            {
-                VersusNet.SendResult(matchLoser);
-            }
-
-            ApplyMatchResult(matchLoser);
+            ApplyMatchResult(false);
             return;
         }
 
-        _nextWaveAt = Time.time + 4f;
+        if (Match.AlivePlayers == 1)
+        {
+            ApplyMatchResult(true);
+        }
+    }
+
+    private static string FormatLives(IReadOnlyDictionary<int, int> lives)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        foreach (var pair in lives)
+        {
+            parts.Add($"p{pair.Key}:{pair.Value}");
+        }
+        return string.Join(",", parts);
+    }
+
+    /// <summary>A peer dropped: remove its army from later rounds on every client.</summary>
+    public static void OnPeerLost(int playerId)
+    {
+        if (Match.Phase == MatchPhase.Idle || Match.Phase == MatchPhase.Finished)
+        {
+            return;
+        }
+
+        Match.RemovePlayer(playerId);
+        VersusPlugin.Log.LogInfo($"match-state: peer {playerId} removed, alive={Match.AlivePlayers}");
+        if (Match.AlivePlayers == 1 && !_resultHandled)
+        {
+            ApplyMatchResult(true);
+        }
     }
 
     private static string LatestLocalSnapshot()
@@ -1798,7 +1724,11 @@ public sealed class VersusBehaviour : MonoBehaviour
 
     private static bool _endShown;
 
-    private static void ApplyMatchResult(int loser)
+    /// <summary>
+    /// Official end screen only. The game's own life loss already decided the
+    /// result; this never calls SetLife, SetRunning or console commands.
+    /// </summary>
+    private static void ApplyMatchResult(bool victory)
     {
         if (_endShown)
         {
@@ -1808,30 +1738,10 @@ public sealed class VersusBehaviour : MonoBehaviour
         _endShown = true;
         _resultHandled = true;
         Match.Finish();
-        var iAmLoser = (VersusNet.Mode == "host" && loser == 0) || (VersusNet.Mode == "join" && loser == 1);
-        VersusPlugin.Log.LogInfo($"match-result: applying {(iAmLoser ? "defeat" : "victory")} on {VersusNet.Mode}");
-        if (iAmLoser)
-        {
-            Core.Wave.Data?.SetRunning(false);
-            RunCommand("SetLife 0");
-            ShowOfficialEnd(GameplayInterface.GameplayUI_EndUI.EndUIType.Defeat);
-        }
-        else
-        {
-            RunCommand("SetLife 1");
-            try
-            {
-                Core.Wave.Data?.SetRunning(false);
-                Core.Wave.Instance?.StopSpawningEnemies();
-                Core.Wave.Instance?.DespawnWaveEnemies();
-            }
-            catch (Exception e)
-            {
-                VersusPlugin.Log.LogWarning($"match-result: stop combat failed: {e.Message}");
-            }
-
-            ShowOfficialEnd(GameplayInterface.GameplayUI_EndUI.EndUIType.Victory);
-        }
+        VersusPlugin.Log.LogInfo($"match-result: applying {(victory ? "victory" : "defeat")} on {VersusNet.Mode}");
+        ShowOfficialEnd(victory
+            ? GameplayInterface.GameplayUI_EndUI.EndUIType.Victory
+            : GameplayInterface.GameplayUI_EndUI.EndUIType.Defeat);
     }
 
     private static float _endRetryAt = -1f;
@@ -1952,29 +1862,27 @@ public sealed class VersusBehaviour : MonoBehaviour
     public static void ResetMatchState()
     {
         _resultHandled = false;
-        _localEliminatedWave = -1;
-        _handshakeWave = -1;
-        _readySent = false;
-        _goSent = false;
-        _autoStarted = false;
         _lastSyncedTo = -1;
         _arenaLocalWave = -1;
         _pendingEndType = null;
         _endRetryAt = -1f;
         _endRetryCount = 0;
-        _combatSince = -1f;
-        _combatSinceWave = -1;
-        _waveResolvedWave = -1;
-        _nextWaveAt = -1f;
         _endShown = false;
+        _startBattleHeld = false;
+        _barrierStartedWave = -1;
+        _battleReleasedWave = -1;
+        _roundAppliedWave = -1;
+        _lastNativeLifeWave = -1;
+        _lastNativeLifeReason = null;
 
         VersusNet.ResetMatchState();
     }
 
     public static bool ResultPending()
     {
-        // Freeze only after the MATCH is decided. Individual waves advance in sync.
-        return _resultHandled || VersusNet.ResultLoser >= 0 || VersusNet.PeerEliminatedWave > 0;
+        // Only a decided match freezes the wave flow. Individual rounds are
+        // resolved by the game's own CompleteWave and life loss.
+        return _resultHandled;
     }
 
     public static bool ClaimStartWave()
@@ -2000,7 +1908,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         try
         {
             BeginVersusBattle("menu");
-            return "Start Battle pressed (hand cleared)";
+            return "Start Battle pressed";
         }
         catch (Exception e)
         {

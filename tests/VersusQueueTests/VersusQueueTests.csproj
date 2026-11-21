@@ -11,5 +11,6 @@
     <Compile Include="../../src/NineKingsVersus/TcpTransport.cs" Link="TcpTransport.cs" />
     <Compile Include="../../src/NineKingsVersus/VersusConfig.cs" Link="VersusConfig.cs" />
     <Compile Include="../../src/NineKingsVersus/MatchState.cs" Link="MatchState.cs" />
+    <Compile Include="../../src/NineKingsVersus/MatchBarrier.cs" Link="MatchBarrier.cs" />
   </ItemGroup>
 </Project>

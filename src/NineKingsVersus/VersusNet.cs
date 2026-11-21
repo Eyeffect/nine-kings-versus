@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -6,11 +7,14 @@ namespace NineKingsVersus;
 
 /// <summary>
 /// Match network facade. Encoding and sockets live in ITransport; sequencing,
-/// dedup and ack tracking live in VersusQueue. This class only maps decoded
-/// messages onto the properties the game flow already reads.
+/// dedup and ack tracking live in VersusQueue; the round barrier lives in
+/// MatchBarrier. This class maps decoded messages onto the match flow.
 ///
-/// Config: BepInEx/versus/net.json
-///   { "mode": "host" | "join", "peer": "192.168.x.y", "port": 28764 }
+/// The host is the only authority for `go` and for the per-round life table.
+/// Every peer frame is relayed to the other peers, so all clients see the same
+/// life reports and can compute the same elimination order.
+///
+/// Config: BepInEx/versus/config.json (mode/peer/port) or legacy net.json.
 /// </summary>
 internal static class VersusNet
 {
@@ -32,58 +36,74 @@ internal static class VersusNet
         public int lives { get; set; } = -1;
         public int loser { get; set; } = -1;
         public int eliminated { get; set; } = -1;
+        public string livesMap { get; set; }
     }
 
     private static readonly object Lock = new();
     private static ITransport _transport;
     private static readonly VersusQueue Queue = new();
     private static int _seq;
-    private static int _localPlayerId;
 
     public static string Mode => _transport?.Mode ?? "off";
     public static bool Connected => _transport?.Connected ?? false;
+    public static int LocalPlayerId => _transport?.LocalPlayerId ?? -1;
+    public static IReadOnlyList<int> Peers => _transport?.Peers ?? Array.Empty<int>();
     public static int StateVersion { get; private set; }
+
+    /// <summary>Host-side ready/life barrier. Pure state, safe to inspect from Update.</summary>
+    public static MatchBarrier Barrier { get; } = new();
 
     /// <summary>Latest opponent snapshot JSON (main-thread accessible).</summary>
     public static string OpponentSnapshotJson { get; private set; }
-
     public static int OpponentWave { get; private set; } = -1;
 
-    /// <summary>Wave number reported ready by the peer, or -1.</summary>
+    /// <summary>Wave number the peer reported ready for, or -1.</summary>
     public static int PeerReadyWave { get; private set; } = -1;
 
-    /// <summary>Wave number the peer told us to start, or -1.</summary>
+    /// <summary>Wave number the host told us to start, or -1.</summary>
     public static int GoWave { get; private set; } = -1;
 
-    /// <summary>Peer's current life count, or -1 until first reported.</summary>
-    public static int PeerLives { get; private set; } = -1;
+    /// <summary>Life table for the last resolved round (playerId -> lives).</summary>
+    public static IReadOnlyDictionary<int, int> RoundLives { get; private set; } =
+        new Dictionary<int, int>();
 
-    /// <summary>Wave number the host reports, for keeping both copies in sync.</summary>
-    public static int HostWave { get; private set; } = -1;
+    public static int RoundWave { get; private set; } = -1;
 
-    /// <summary>Host-authoritative loser (0=host, 1=join) of the last resolved wave.</summary>
-    public static int WaveWinLoser { get; private set; } = -1;
-
-    /// <summary>Wave number of the last resolved wave, or -1.</summary>
-    public static int WaveWinWave { get; private set; } = -1;
-
-    /// <summary>Local life count from the latest captured snapshot.</summary>
+    /// <summary>Local life count from the latest native report.</summary>
     public static int LocalLives { get; private set; } = -1;
 
-    /// <summary>Host-authoritative loser (0=host, 1=join), or -1.</summary>
-    public static int ResultLoser { get; private set; } = -1;
+    /// <summary>First peer's life count; kept for the in-game diagnostic panel.</summary>
+    public static int PeerLives
+    {
+        get
+        {
+            foreach (var pair in RoundLives)
+            {
+                if (pair.Key != LocalPlayerId)
+                {
+                    return pair.Value;
+                }
+            }
 
-    /// <summary>Wave at which the peer's army was destroyed, or -1.</summary>
+            return -1;
+        }
+    }
+
+    // Compatibility fields used by the legacy diagnostic menu. They no longer
+    // decide a round; the native life table above does.
+    public static int HostWave { get; private set; } = -1;
+    public static int WaveWinLoser { get; private set; } = -1;
+    public static int WaveWinWave { get; private set; } = -1;
+    public static int ResultLoser { get; private set; } = -1;
     public static int PeerEliminatedWave { get; private set; } = -1;
 
     public static void SetLocalLives(int lives)
     {
         LocalLives = lives;
-    }
-
-    public static void SetPeerLives(int lives)
-    {
-        PeerLives = lives;
+        if (Mode == "host")
+        {
+            Barrier.SetLives(LocalPlayerId, lives);
+        }
     }
 
     public static void Init()
@@ -104,11 +124,13 @@ internal static class VersusNet
                     VersusPlugin.Log.LogInfo("net: no config or net.json; transport disabled");
                     return;
                 }
+
                 settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(path));
             }
+
             if (settings == null || settings.port < 1 || settings.port > 65535)
             {
-                VersusPlugin.Log.LogWarning("net: invalid net.json");
+                VersusPlugin.Log.LogWarning("net: invalid network config");
                 return;
             }
 
@@ -123,25 +145,31 @@ internal static class VersusNet
             {
                 Log = line => VersusPlugin.Log.LogInfo(line),
             };
+            transport.PeerLost += OnPeerLost;
 
             if (mode == "host")
             {
-                _localPlayerId = 0;
                 transport.StartHost(settings.port);
             }
             else
             {
-                _localPlayerId = 1;
                 transport.StartJoin(settings.peer, settings.port);
             }
 
             _transport = transport;
-            VersusPlugin.Log.LogInfo($"net: {Mode} ready on port {settings.port} peer={settings.peer}");
+            VersusPlugin.Log.LogInfo($"net: {Mode} ready on port {settings.port} peer={settings.peer} id={LocalPlayerId}");
         }
         catch (Exception e)
         {
             VersusPlugin.Log.LogWarning($"net init failed: {e.GetType().Name}: {e.Message}");
         }
+    }
+
+    private static void OnPeerLost(int playerId)
+    {
+        VersusPlugin.Log.LogInfo($"net: peer {playerId} left the match");
+        Barrier.RemovePlayer(playerId);
+        VersusBehaviour.OnPeerLost(playerId);
     }
 
     /// <summary>Called from Update. Publishes decoded network data to the main thread.</summary>
@@ -153,13 +181,28 @@ internal static class VersusNet
             return;
         }
 
-        while (transport.TryReceive(out var json))
+        while (transport.TryReceive(out var raw))
         {
-            var message = Decode(json);
-            if (message != null)
+            var message = Decode(raw);
+            if (message == null)
             {
-                Queue.Enqueue(message);
+                continue;
             }
+
+            if (Mode == "host" && message.PlayerId != LocalPlayerId && !string.IsNullOrEmpty(raw))
+            {
+                if (Barrier.Wave >= 0 && !Barrier.Alive.Contains(message.PlayerId))
+                {
+                    Barrier.AddPlayer(message.PlayerId);
+                    VersusPlugin.Log.LogInfo($"net: added late peer p{message.PlayerId} to wave {Barrier.Wave} barrier");
+                }
+
+                // Star topology: a join's frame is forwarded to the other joins
+                // unchanged, including the original sender id and sequence.
+                transport.SendExcept(message.PlayerId, raw);
+            }
+
+            Queue.Enqueue(message);
         }
 
         foreach (var message in Queue.Drain())
@@ -172,52 +215,176 @@ internal static class VersusNet
                     StateVersion++;
                     if (message.Lives >= 0)
                     {
-                        PeerLives = message.Lives;
-                        VersusPlugin.Log.LogInfo($"net: peer lives={message.Lives}");
+                        PeerLivesChanged(message.PlayerId, message.Lives);
                     }
                     VersusPlugin.Log.LogInfo($"net: received opponent state wave={message.Wave} bytes={message.Snapshot?.Length ?? 0}");
                     break;
                 case "ready":
                     PeerReadyWave = message.Wave;
-                    VersusPlugin.Log.LogInfo($"net: peer ready for wave {message.Wave}");
+                    if (Mode == "host")
+                    {
+                        Barrier.MarkReady(message.PlayerId, message.Wave);
+                        VersusPlugin.Log.LogInfo($"net: ready p{message.PlayerId} wave={message.Wave} " +
+                            $"({Barrier.ReadyCount()}/{Barrier.Alive.Count})");
+                        TryBroadcastGo(message.Wave);
+                    }
                     break;
                 case "go":
                     GoWave = message.Wave;
-                    VersusPlugin.Log.LogInfo($"net: peer says go for wave {message.Wave}");
+                    VersusPlugin.Log.LogInfo($"net: go for wave {message.Wave}");
                     break;
-                case "result":
-                    ResultLoser = message.Loser;
-                    VersusPlugin.Log.LogInfo($"net: authoritative result loser={(message.Loser == 0 ? "host" : "join")}");
+                case "waveend":
+                    if (Mode == "host")
+                    {
+                        Barrier.MarkLife(message.PlayerId, message.Wave, message.Lives);
+                        VersusPlugin.Log.LogInfo($"net: waveend p{message.PlayerId} wave={message.Wave} lives={message.Lives}");
+                        TryBroadcastRound(message.Wave);
+                    }
                     break;
-                case "eliminated":
-                    PeerEliminatedWave = message.Eliminated >= 0 ? message.Eliminated : message.Wave;
-                    VersusPlugin.Log.LogInfo($"net: peer army eliminated at wave {PeerEliminatedWave}");
+                case "round":
+                    RoundLives = ParseLives(message.LivesMap);
+                    RoundWave = message.Wave;
+                    VersusPlugin.Log.LogInfo($"net: round {message.Wave} lives={FormatLives(RoundLives)}");
                     break;
                 case "sync":
                     HostWave = message.Wave;
                     break;
+                case "result":
+                    ResultLoser = message.Loser;
+                    break;
+                case "eliminated":
+                    PeerEliminatedWave = message.Eliminated >= 0 ? message.Eliminated : message.Wave;
+                    break;
                 case "wavewin":
                     WaveWinLoser = message.Loser;
                     WaveWinWave = message.Wave;
-                    VersusPlugin.Log.LogInfo($"net: wave {message.Wave} winner decided, loser={(message.Loser == 0 ? "host" : "join")}");
                     break;
             }
         }
     }
 
-    public static void SendState(int wave, string snapshotJson, int lives)
+    /// <summary>Initialise the barrier for a new wave with the currently linked players.</summary>
+    public static void BeginWave(int wave)
     {
-        Send(new Message { type = "state", wave = wave, snapshot = snapshotJson, lives = lives });
+        var alive = new List<int> { LocalPlayerId };
+        foreach (var id in Peers)
+        {
+            if (id != LocalPlayerId && !alive.Contains(id))
+            {
+                alive.Add(id);
+            }
+        }
+
+        Barrier.BeginWave(wave, alive);
+        if (Barrier.GetLives(LocalPlayerId) < 0 && LocalLives >= 0)
+        {
+            Barrier.SetLives(LocalPlayerId, LocalLives);
+        }
+
+        VersusPlugin.Log.LogInfo($"net: wave {wave} barrier players=[{string.Join(",", Barrier.Alive)}]");
     }
 
+    /// <summary>Declare this client ready for a wave. Host also marks itself.</summary>
     public static void SendReady(int wave)
     {
+        if (Mode == "host")
+        {
+            Barrier.MarkReady(LocalPlayerId, wave);
+            TryBroadcastGo(wave);
+        }
+
         Send(new Message { type = "ready", wave = wave });
     }
 
-    public static void SendGo(int wave)
+    /// <summary>Host releases all players once every alive player is ready.</summary>
+    private static void TryBroadcastGo(int wave)
     {
+        if (Mode != "host" || wave < Barrier.Wave || GoWave == wave ||
+            Barrier.Alive.Count < 2 || !Barrier.AllReady())
+        {
+            return;
+        }
+
+        GoWave = wave;
         Send(new Message { type = "go", wave = wave });
+        VersusPlugin.Log.LogInfo($"net: go broadcast for wave {wave}");
+    }
+
+    /// <summary>Report the native life count at the end of a wave.</summary>
+    public static void SendWaveEnd(int wave, int lives)
+    {
+        LocalLives = lives;
+        if (Mode == "host")
+        {
+            Barrier.MarkLife(LocalPlayerId, wave, lives);
+            TryBroadcastRound(wave);
+            return;
+        }
+
+        Send(new Message { type = "waveend", wave = wave, lives = lives });
+    }
+
+    private static void TryBroadcastRound(int wave)
+    {
+        if (Mode != "host" || wave < Barrier.Wave || RoundWave == wave || !Barrier.AllReported())
+        {
+            return;
+        }
+
+        var map = new Dictionary<int, int>();
+        foreach (var id in Barrier.Alive)
+        {
+            map[id] = Barrier.GetLives(id);
+        }
+
+        RoundLives = map;
+        RoundWave = wave;
+        var livesMap = FormatLives(map);
+        Send(new Message { type = "round", wave = wave, livesMap = livesMap });
+        VersusPlugin.Log.LogInfo($"net: round {wave} resolved, lives={livesMap}");
+    }
+
+    private static void PeerLivesChanged(int playerId, int lives)
+    {
+        if (Mode == "host")
+        {
+            Barrier.SetLives(playerId, lives);
+        }
+    }
+
+    private static string FormatLives(IReadOnlyDictionary<int, int> map)
+    {
+        var parts = new List<string>();
+        foreach (var pair in map)
+        {
+            parts.Add($"{pair.Key}:{pair.Value}");
+        }
+        return string.Join(",", parts);
+    }
+
+    private static Dictionary<int, int> ParseLives(string map)
+    {
+        var result = new Dictionary<int, int>();
+        if (string.IsNullOrEmpty(map))
+        {
+            return result;
+        }
+
+        foreach (var entry in map.Split(','))
+        {
+            var parts = entry.Split(':');
+            if (parts.Length == 2 && int.TryParse(parts[0], out var id) && int.TryParse(parts[1], out var lives))
+            {
+                result[id] = lives;
+            }
+        }
+
+        return result;
+    }
+
+    public static void SendState(int wave, string snapshotJson, int lives)
+    {
+        Send(new Message { type = "state", wave = wave, snapshot = snapshotJson, lives = lives });
     }
 
     public static void SendResult(int loser)
@@ -252,7 +419,10 @@ internal static class VersusNet
         WaveWinWave = -1;
         OpponentWave = -1;
         OpponentSnapshotJson = null;
+        RoundLives = new Dictionary<int, int>();
+        RoundWave = -1;
         Queue.Reset();
+        Barrier.Reset();
         // Seq stays monotonic so the peer's dedup window does not reject us.
     }
 
@@ -264,15 +434,15 @@ internal static class VersusNet
     private static void Send(Message message)
     {
         var transport = _transport;
-        if (transport == null)
+        if (transport == null || transport.LocalPlayerId < 0)
         {
-            VersusPlugin.Log.LogWarning($"net: cannot send {message.type}: not connected");
+            VersusPlugin.Log.LogWarning($"net: cannot send {message.type}: no player id yet");
             return;
         }
 
         lock (Lock)
         {
-            message.playerId = _localPlayerId;
+            message.playerId = transport.LocalPlayerId;
             message.seq = ++_seq;
             message.ack = Queue.AckSeq;
         }
@@ -304,7 +474,9 @@ internal static class VersusNet
                 Lives = root.TryGetProperty("lives", out var lives) ? lives.GetInt32() : -1,
                 Loser = root.TryGetProperty("loser", out var loser) ? loser.GetInt32() : -1,
                 Eliminated = root.TryGetProperty("eliminated", out var eliminated) ? eliminated.GetInt32() : -1,
+                LivesMap = root.TryGetProperty("livesMap", out var map) ? map.GetString() : null,
                 Snapshot = root.TryGetProperty("snapshot", out var snapshot) ? snapshot.GetString() : null,
+                Raw = json,
             };
         }
         catch (Exception e)

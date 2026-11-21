@@ -280,12 +280,12 @@ internal static class Program
         Check("placing begins battle", state.BeginBattle() && state.Phase == MatchPhase.Battle);
         Check("battle cannot begin another round", !state.BeginRound(2));
 
-        state.ResolveRound(2);
+        state.ResolveRound(2, true);
         Check("battle -> resolving", state.Phase == MatchPhase.Resolving && state.LastLoser == 2 && state.AlivePlayers == 2);
         Check("resolving -> next round", state.BeginRound(2) && state.Round == 2 && state.Phase == MatchPhase.Placing);
         state.BeginBattle();
-        state.ResolveRound(state.LocalPlayerId);
-        Check("local loss does not reduce alive count", state.AlivePlayers == 2);
+        state.ResolveRound(state.LocalPlayerId, false);
+        Check("surviving a round does not reduce alive count", state.AlivePlayers == 2);
 
         state.Finish();
         Check("resolving -> finished", state.Phase == MatchPhase.Finished);
@@ -312,12 +312,78 @@ internal static class Program
         Check("transition events fire", seen == 2);
     }
 
+    private static void BarrierTests()
+    {
+        var barrier = new MatchBarrier();
+        barrier.BeginWave(1, new[] { 0, 1, 2 });
+        Check("barrier starts unready", !barrier.AllReady() && barrier.ReadyCount() == 0);
+        barrier.MarkReady(0, 1);
+        barrier.MarkReady(1, 2);
+        Check("later wave ready counts", barrier.ReadyCount() == 2 && !barrier.AllReady());
+        barrier.MarkReady(2, 1);
+        Check("barrier releases on all ready", barrier.AllReady());
+
+        barrier.MarkLife(0, 1, 2);
+        barrier.MarkLife(1, 1, 1);
+        Check("barrier waits for all life reports", !barrier.AllReported());
+        barrier.MarkLife(2, 1, 0);
+        Check("barrier releases on all life reports", barrier.AllReported());
+        Check("eliminated player identified", barrier.Eliminated().Length == 1 && barrier.Eliminated()[0] == 2);
+        Check("lowest life identified", barrier.LowestLifePlayer() == 2);
+
+        barrier.RemovePlayer(2);
+        Check("removed player excluded", barrier.Alive.Count == 2 && barrier.AllReady() && barrier.AllReported());
+        Check("lives survive player removal", barrier.GetLives(0) == 2 && barrier.GetLives(2) == 0);
+
+        barrier.BeginWave(2, new[] { 0, 1 });
+        Check("new wave resets marks", !barrier.AllReady() && !barrier.AllReported());
+        Check("new wave keeps lives", barrier.GetLives(1) == 1);
+        barrier.Reset();
+        Check("barrier reset", barrier.Wave == -1 && barrier.Alive.Count == 0 && barrier.Lives.Count == 0);
+    }
+
+    private static void StarTests()
+    {
+        var port = 39200;
+        using (var host = new TcpTransport())
+        using (var join1 = new TcpTransport())
+        using (var join2 = new TcpTransport())
+        {
+            var lost = new List<int>();
+            host.PeerLost += id => lost.Add(id);
+            host.StartHost(port);
+            join1.StartJoin("127.0.0.1", port);
+            join2.StartJoin("127.0.0.1", port);
+
+            Check("joins get distinct ids", WaitUntil(() =>
+                join1.LocalPlayerId > 0 && join2.LocalPlayerId > 0 &&
+                join1.LocalPlayerId != join2.LocalPlayerId, 5000));
+            Check("host id is zero", host.LocalPlayerId == 0);
+            Check("host sees two peers", WaitUntil(() => host.Peers.Count == 2, 5000));
+            Check("join sees the host", join1.Peers.Count == 1 && join1.Peers[0] == 0);
+
+            var fromJoin1 = join1.LocalPlayerId;
+            var other = fromJoin1 == 1 ? 2 : 1;
+            host.SendExcept(fromJoin1, "{\"type\":\"round\",\"wave\":1}");
+            Check("relay skips sender", Receive(join1) == null && WaitUntil(() => Receive(join2) != null, 5000));
+
+            host.SendTo(fromJoin1, $"{{\"type\":\"go\",\"wave\":1,\"to\":{fromJoin1}}}");
+            Check("targeted send reaches one peer", WaitUntil(() => Receive(join1) != null, 5000));
+
+            join2.Stop();
+            Check("host reports peer loss", WaitUntil(() => lost.Contains(other), 5000));
+            Check("host peer list shrinks", WaitUntil(() => host.Peers.Count == 1, 5000));
+        }
+    }
+
     private static int Main()
     {
         QueueTests();
         ConfigTests();
         StateTests();
+        BarrierTests();
         LoopbackTests();
+        StarTests();
 
         Console.WriteLine(_failed == 0 ? "ALL TESTS PASSED" : $"{_failed} TEST(S) FAILED");
         return _failed == 0 ? 0 : 1;

@@ -395,3 +395,21 @@ Added `src/NineKingsVersus/VersusQueue.cs`: a thread-safe message inbox replacin
 - `Introduction.IntroFinished()` loads `_gameplayScene` (serialized as `Gameplay`). `Update()` also lets any key skip the splash.
 - The versus start now passes `sceneName = "YearShowcase"` to `StartNewGame` instead of `"Gameplay"`. No splash element is painted, forced or replaced. Verified with window captures: blue full screen, black flakes, year text, "These are your enemies", four king cards, then Gameplay loads about 6.4 s later.
 - The `GameplayUI_EnemyShowcase` / `GameplayUI_YearShowcasePanel` path is NOT the pre-match splash; it is the in-game year/enemy UI. Do not use it for match start.
+
+## Stage 2: go barrier and native result (2026-11-21, in progress)
+
+Implemented (code + no-game tests, build green):
+- `TcpTransport` now assigns each accepted peer an id (1..8), exposes `LocalPlayerId`, `Peers` and `PeerLost`, and supports `SendTo` / `SendExcept`. `VersusNet` relays a join's frame to the other joins, so the star topology carries any number of players. Tests cover 8 joins, id assignment, targeted send, relay exclusion and disconnect events (65 assertions total, all pass).
+- `MatchBarrier` holds the per-wave ready and life-report marks. The host broadcasts `go` once all alive players are ready for the wave. `Core.Wave.StartCombat` has a Harmony prefix that returns `false` until `go`, then the held call is resumed with the game's own `StartCombat`. The player still presses the native Start Battle button; no hand clearing and no forced combat.
+- The 12 s timeout, `DecideWaveLoser`, `UnitsKilled` comparison and `wave % 2` were removed. A round resolves only when every alive player reports the life count at the game's own `EndWave`; the host broadcasts a life table and every client applies eliminations from it. `ApplyMatchResult` now calls only `OnCompleteGame` — no `SetLife`, `SetRunning` or console commands.
+- Native life-loss observation confirmed from the decompile: `PlayerBase.ReceivedLethalDamage` (`0x1806CAFE0`) branches on `PlayerBase._multiplayerEnemyBase`; for the player's own base it starts `ReceivedDamage` and the game decrements `Core.PlayerLife.Instance.HealthPoints`. `ReceivedMultiplayerEnemyBaseDamage(int healthPoints, bool lostLife)` (`0x1806CB4E0`) is the enemy-base branch and decrements `MultiplayerRunData.currentHP`. We patch both only as Postfix observers; the game owns every write.
+
+Two-process loopback validation (disposable copies, `wave-begin` + `start-battle` probe flags):
+- Both peers reached wave 0, sent `ready`, host logged `net: ready p1 wave=0 (2/2)` and `net: go broadcast for wave 0`.
+- Both peers logged `barrier: go for wave 0; releasing native StartCombat`, then `StartCombat in: instant=True wave=0`. The barrier is verified.
+
+Blocked / unknown (do not claim Stage 2 done):
+- The official 20-round criterion is NOT met. With a fresh empty board (or the backup wave-32 run) combat stalls: `verify ... entities=1 player=0 enemy=1`, no `EndWave`, no life loss, so `OnWaveEnded` never fires and the round life table is never produced. `SpawnWave` is repeated by the game, adding enemy areas each time (known issue #3).
+- `bots: installed 0 distinct bot decks`: a fresh snapshot has no troop cards. A starter-troop fallback was tried (`Game.GetTroop` with catalog names, then `PlayerDeck.GroupArray`) but did not resolve cards; it was removed instead of being left as an unverified shortcut. Supplying real opponent armies for the first wave is still open.
+- With `load-backup`, the loaded run reported `wave=32` but `Gameplay` started at `wave=0` with `multiplayer=True`; `EndWave` threw `During invoking native->managed trampoline` before the life path could be exercised.
+- No 3-process game test yet; the N-player transport is validated only by the no-game suite.

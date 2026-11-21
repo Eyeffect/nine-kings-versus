@@ -19,7 +19,11 @@ public sealed class MatchMessage
     public int Lives;
     public int Loser;
     public int Eliminated;
+    public string LivesMap;
     public string Snapshot;
+
+    /// <summary>Original frame, used by the host to relay a join's message.</summary>
+    public string Raw;
 }
 
 /// <summary>

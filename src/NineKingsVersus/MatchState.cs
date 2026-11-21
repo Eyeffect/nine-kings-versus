@@ -107,8 +107,12 @@ public sealed class MatchState
         return TryTransition(MatchPhase.Battle);
     }
 
-    /// <summary>Native life-loss event decided this round.</summary>
-    public bool ResolveRound(int loser)
+    /// <summary>
+    /// Native life-loss event decided this round. Only an eliminated player is
+    /// removed from the alive count; surviving a round with fewer lives is not
+    /// an elimination.
+    /// </summary>
+    public bool ResolveRound(int loser, bool eliminated)
     {
         if (!TryTransition(MatchPhase.Resolving))
         {
@@ -116,9 +120,9 @@ public sealed class MatchState
         }
 
         LastLoser = loser;
-        if (loser >= 0 && loser != LocalPlayerId)
+        if (eliminated && loser >= 0)
         {
-            AlivePlayers--;
+            RemovePlayer(loser);
         }
         return true;
     }

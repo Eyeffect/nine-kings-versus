@@ -94,7 +94,7 @@ internal static class Patches
                 var runData = Core.Wave.Data;
                 if (VersusNet.Connected && runData != null && runData.Wave >= 0)
                 {
-                    VersusBehaviour.Match.BeginRound(runData.Wave);
+                    VersusBehaviour.OnWaveStarted(runData.Wave);
                 }
                 VersusPlugin.Log.LogInfo(
                     $"StartWave end: session={(session == null ? "null" : "set")} gauntlet={session?.GauntletEnemies?.Count ?? -1} " +
@@ -190,6 +190,8 @@ internal static class Patches
         {
             try
             {
+                var wave = Core.Wave.Data?.Wave ?? -1;
+                VersusBehaviour.OnWaveEnded(wave);
                 SnapshotDump.Write(Gameplay.GameSnapshot.CaptureSnapshot(), "wave-end");
             }
             catch (Exception e)
@@ -293,6 +295,10 @@ internal static class Patches
                     $"SpawnWave in: wave={data?.Wave} runMultiplayer={data?.IsMultiplayer} " +
                     $"snapshot={(Core.Wave.CurrentMultiplayerEnemySnapshot == null ? "null" : "set")} " +
                     $"gauntlet={session?.GauntletEnemies?.Count ?? -1} active={session?.GauntletActive.ToString() ?? "n/a"}");
+                // The first wave is set up by SpawnWave, not StartWave, so the
+                // ready/go barrier must be announced here as well. OnWaveStarted
+                // is idempotent per wave.
+                VersusBehaviour.OnWaveStarted(data?.Wave ?? -1);
             }
             catch (Exception e)
             {
@@ -357,8 +363,21 @@ internal static class Patches
     [HarmonyPatch(typeof(Core.Wave), nameof(Core.Wave.StartCombat))]
     internal static class StartCombatPatch
     {
-        private static void Prefix(bool instant)
+        /// <summary>
+        /// Stage 2 barrier. The player presses the game's own Start Battle button
+        /// as usual; the native call reaches here, and we hold it until the host
+        /// has collected every player's ready and sent go. StartBattle's UI/state
+        /// work has already happened at this point, so nothing is corrupted by
+        /// blocking only the point of no return.
+        /// </summary>
+        private static bool Prefix(bool instant)
         {
+            if (!VersusBehaviour.MayStartCombat())
+            {
+                VersusBehaviour.OnCombatHeld();
+                return false;
+            }
+
             if (File.Exists(Path.Combine(VersusPlugin.DataDir, "trace-battle-start")))
             {
                 VersusPlugin.Log.LogWarning(
@@ -377,6 +396,31 @@ internal static class Patches
             {
                 VersusPlugin.Log.LogWarning($"StartCombat prefix failed: {e.Message}");
             }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Native life-loss observation. The game itself decrements
+    /// Core.PlayerLife.Instance.HealthPoints in ReceivedDamage; we only read the
+    /// event and the resulting value, never SetLife.
+    /// </summary>
+    [HarmonyPatch(typeof(Core.Kingdoms.PlayerBase), nameof(Core.Kingdoms.PlayerBase.ReceivedLethalDamage))]
+    internal static class PlayerBaseLethalDamagePatch
+    {
+        private static void Postfix()
+        {
+            VersusBehaviour.OnNativeLifeLoss("lethal");
+        }
+    }
+
+    [HarmonyPatch(typeof(Core.Kingdoms.PlayerBase), nameof(Core.Kingdoms.PlayerBase.ReceivedMultiplayerEnemyBaseDamage))]
+    internal static class PlayerBaseEnemyBaseDamagePatch
+    {
+        private static void Postfix(int healthPoints, bool lostLife)
+        {
+            VersusBehaviour.OnNativeEnemyBaseDamage(healthPoints, lostLife);
         }
     }
 
