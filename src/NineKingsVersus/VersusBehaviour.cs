@@ -44,8 +44,7 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static int _combatSinceWave = -1;
     private static int _waveResolvedWave = -1;
     private static float _nextWaveAt = -1f;
-    private static float _mpScreenAt = -1f;
-    private static bool _mpScreenShown;
+
     private static int _verifySamples;
     private float _autoAt = -1f;
     private static bool _configStartDone;
@@ -184,26 +183,9 @@ public sealed class VersusBehaviour : MonoBehaviour
             LocalSessionProbe.DumpFreshSnapshot();
         }
 
-        // Activate the native enemy-face bar once the Gameplay scene has settled.
-        // GameplayMultiplayerManager.Start leaves it inactive in our loaded run, so
-        // the enemy reveal never appears unless we enable and populate it ourselves.
-        // The splash belongs to the match intro, not to the network handshake:
-        // show it as soon as the Gameplay scene settles, even before a peer joins.
-        if (_lastScene == "Gameplay" && !_mpScreenShown && _mpScreenAt < 0f)
-        {
-            _mpScreenAt = Time.time + 2f;
-        }
-
-        if (_mpScreenAt > 0f && Time.time >= _mpScreenAt)
-        {
-            _mpScreenAt = -1f;
-            _mpScreenShown = true;
-            LocalSessionProbe.ShowMpScreen();
-            // The native match intro: year splash followed by "Your enemies are:"
-            // with the three enemy-king cards. The player accepts it with the
-            // game's own button, so there is no forced input or custom overlay.
-            LocalSessionProbe.PlayYearShowcase();
-        }
+        // The pre-match year/enemies splash is now the game's own YearShowcase
+        // scene, loaded by Wave.StartNewGame before Gameplay. Nothing is painted
+        // or forced here.
 
         var clickStart = System.IO.Path.Combine(VersusPlugin.DataDir, "click-start");
         if (_lastScene == "MainMenu" && System.IO.File.Exists(clickStart))
@@ -217,13 +199,6 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             System.IO.File.Delete(probeStartNewGame);
             LocalSessionProbe.StartMultiplayerRun("Nothing");
-        }
-
-        var forceShowcase = System.IO.Path.Combine(VersusPlugin.DataDir, "showcase");
-        if (_lastScene == "Gameplay" && System.IO.File.Exists(forceShowcase))
-        {
-            System.IO.File.Delete(forceShowcase);
-            LocalSessionProbe.PlayYearShowcase();
         }
 
         var showMpScreen = System.IO.Path.Combine(VersusPlugin.DataDir, "show-mp-screen");
@@ -1010,7 +985,7 @@ public sealed class VersusBehaviour : MonoBehaviour
             {
                 _lastScene = scene;
                 var hubManager = UnityEngine.Object.FindObjectOfType<MultiplayerSystems.MultiplayerManager>();
-                VersusPlugin.Log.LogInfo($"scene changed: {scene} multiplayerManager={(hubManager == null ? "absent" : "present")}");
+                VersusPlugin.Log.LogInfo($"scene changed: {scene} multiplayerManager={(hubManager == null ? "absent" : "present")} t={Time.realtimeSinceStartup:0.00}");
             }
         }
         catch
@@ -1992,8 +1967,7 @@ public sealed class VersusBehaviour : MonoBehaviour
         _waveResolvedWave = -1;
         _nextWaveAt = -1f;
         _endShown = false;
-        _mpScreenAt = -1f;
-        _mpScreenShown = false;
+
         VersusNet.ResetMatchState();
     }
 

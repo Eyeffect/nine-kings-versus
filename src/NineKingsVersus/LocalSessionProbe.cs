@@ -656,8 +656,13 @@ internal static class LocalSessionProbe
             var enemiesReadOnly = enemies.Cast<Il2CppSystem.Collections.Generic.IReadOnlyList<string>>();
             VersusPlugin.Log.LogInfo($"start-mp: customEnemies=[{string.Join(",", enemies)}]");
 
+            // Official match-start flow: StartNewGame loads the YearShowcase scene,
+            // whose Introduction controller shows the year, "Your enemies are:" and
+            // the blue rebellion background with black flakes, then IntroFinished
+            // loads the Gameplay scene. Gameplay stays as a fallback.
             var candidates = new (string scene, bool multiplayer)[]
             {
+                ("YearShowcase", true),
                 ("Gameplay", true),
                 ("", true),
                 ("Gameplay", false),
@@ -671,7 +676,7 @@ internal static class LocalSessionProbe
                 args[2] = candidate.scene;       // sceneName
                 args[3] = enemiesReadOnly;       // customEnemies (3 kings)
                 args[4] = new Il2CppSystem.Nullable<int>(12345); // null NREs in the wrapper
-                args[5] = true;                  // instaLoad
+                args[5] = false;                 // instaLoad: native fade into the splash
                 args[6] = emptyReadOnly;         // disabledKings
                 args[7] = candidate.multiplayer; // isMultiplayer
                 args[8] = false;                 // registerRunStart (offline profile untouched)
@@ -2280,89 +2285,6 @@ internal static class LocalSessionProbe
         }
     }
 
-    /// <summary>
-    /// The native splash fade coroutine does not run in our attached run. Reveal
-    /// the real full-screen background (solid-colour Images, no sprite) and leave
-    /// the card/Accept artwork at its native alpha. Also start the rebellion-flake
-    /// particle system that the splash uses.
-    /// </summary>
-    private static void MakeSplashOpaque(UnityEngine.Transform root)
-    {
-        if (root == null)
-        {
-            return;
-        }
-
-        var group = root.GetComponent<UnityEngine.CanvasGroup>();
-        if (group != null)
-        {
-            group.alpha = 1f;
-            group.interactable = true;
-            group.blocksRaycasts = true;
-        }
-
-        RevealSolidBackground(root, 0);
-        PlaySplashParticles(root, 0);
-    }
-
-    private static void RevealSolidBackground(UnityEngine.Transform t, int depth)
-    {
-        if (t == null || depth > 6)
-        {
-            return;
-        }
-
-        try
-        {
-            var image = t.GetComponent<UnityEngine.UI.Image>();
-            if (image != null && image.sprite == null)
-            {
-                var color = image.color;
-                color.a = 1f;
-                image.color = color;
-            }
-        }
-        catch
-        {
-            // Some Il2Cpp wrappers cannot unstrip GetComponent<Image>; skip them.
-        }
-
-        for (var i = 0; i < t.childCount; i++)
-        {
-            RevealSolidBackground(t.GetChild(i), depth + 1);
-        }
-    }
-
-    private static void PlaySplashParticles(UnityEngine.Transform t, int depth)
-    {
-        if (t == null || depth > 6)
-        {
-            return;
-        }
-
-        try
-        {
-            foreach (var component in t.GetComponents<UnityEngine.Component>())
-            {
-                if (component == null || component.GetType().Name != "ParticleSystem")
-                {
-                    continue;
-                }
-
-                var play = component.GetType().GetMethod("Play", System.Type.EmptyTypes);
-                play?.Invoke(component, null);
-            }
-        }
-        catch
-        {
-        }
-
-        for (var i = 0; i < t.childCount; i++)
-        {
-            PlaySplashParticles(t.GetChild(i), depth + 1);
-        }
-    }
-
     public static void ProbeUiGetters()
     {
         try
@@ -2518,51 +2440,6 @@ internal static class LocalSessionProbe
         {
             var inner = e.InnerException ?? e;
             VersusPlugin.Log.LogWarning($"escape failed: {inner.GetType().Name}: {inner.Message}\n{inner}");
-        }
-    }
-
-    public static void PlayYearShowcase()
-    {
-        try
-        {
-            var panels = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_YearShowcasePanel>();
-            if (panels == null || panels.Length == 0)
-            {
-                VersusPlugin.Log.LogWarning("showcase: no YearShowcasePanel found");
-                return;
-            }
-
-            var panel = panels[0];
-            panel.gameObject.SetActive(true);
-            MakeSplashOpaque(panel.transform);
-            var method = typeof(GameplayInterface.GameplayUI_YearShowcasePanel).GetMethod("ShowcaseYear",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance);
-            method?.Invoke(panel, null);
-            VersusPlugin.Log.LogInfo($"showcase: ShowcaseYear invoked panel={panel.name}");
-
-            var allShowcases = UnityEngine.Resources.FindObjectsOfTypeAll<GameplayInterface.GameplayUI_EnemyShowcase>();
-            var enemyShowcase = allShowcases != null && allShowcases.Length > 0 ? allShowcases[0] : null;
-            if (enemyShowcase != null)
-            {
-                var esType = enemyShowcase.GetType();
-                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                            System.Reflection.BindingFlags.Instance;
-                esType.GetMethod("Initialize", flags)?.Invoke(enemyShowcase, null);
-                esType.GetMethod("Show", flags)?.Invoke(enemyShowcase, null);
-                MakeSplashOpaque(enemyShowcase.transform);
-                var rootGroup = enemyShowcase.GetComponent<UnityEngine.CanvasGroup>();
-                VersusPlugin.Log.LogInfo($"showcase: year + enemy splash shown alpha={rootGroup?.alpha.ToString("F2") ?? "-"}");
-
-            }
-            else
-            {
-                VersusPlugin.Log.LogWarning("showcase: EnemyShowcase missing");
-            }
-        }
-        catch (Exception e)
-        {
-            VersusPlugin.Log.LogWarning($"showcase failed: {e.GetType().Name}: {(e.InnerException ?? e).Message}");
         }
     }
 
