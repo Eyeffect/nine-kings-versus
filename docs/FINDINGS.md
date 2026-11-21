@@ -411,9 +411,14 @@ Two-process loopback validation (disposable copies, QA-only `bot-army` configura
 - Because attached runs do not always call `EndWave`, the result is also read at the native wave boundary from `Core.PlayerLife.Instance.HealthPoints` and from the opponent's `MultiplayerRunData.currentHP` (the value written by `ReceivedMultiplayerEnemyBaseDamage`). No timer, kill count or parity is involved.
 - Verified 7 synchronized rounds (0–6): both peers reported `waveend` with the game's own life values, the host broadcast the same life table (`net: round 5 resolved, lives=0:3,1:4`), both applied it (`native-result: round 5 applied, lives=p0:3,p1:4, eliminated=[], alive=2`), and `ready/go` repeated for each following wave. Lives genuinely fell from 5 to 2/4 over those rounds.
 
+Wave lockstep (latest two-process run):
+- `StartWave` is now held by a Harmony prefix until the previous round's life table has been applied on that client (`MayStartWave`), then the same native call is released once. `CompleteWave` is NOT blocked — holding it deadlocks the wave flow; that was tried and reverted.
+- `MatchBarrier.MarkLife` keeps reports keyed by wave and `BeginWave` no longer clears them. Previously a peer's late report for wave N was dropped when another peer advanced to N+1, silently skipping the round. `AllReported(wave)` now checks the exact wave.
+- Verified 8 consecutive rounds (0–7) in lockstep: both peers applied identical tables (`lives=p0:1,p1:1` after round 7), lives fell 5 → 1 from native damage, and `ready/go` repeated for every wave. No skipped rounds in that window. Regression test added for report retention across `BeginWave`.
+
 Still open (do not claim Stage 2 done):
-- The official 20-round criterion is NOT met. The loop stalls around wave 9–10 because the game does not reliably re-enter combat in the attached run with the QA driver; rounds 7+ were not resolved in the tested window.
-- No elimination / `OnCompleteGame` end screen was reached: neither side's life hit 0 in the validated window.
-- Wave numbers occasionally drift between the two copies (e.g. a late `ready p1 wave=3` after wave 4), so some rounds were skipped by the host's round resolution. The N-wave convergence needs a dedicated fix in the next pass.
+- The 20-round criterion is NOT met: the loop stalls at wave 8 with ~205 enemy entities and no player entities. The opponent army has no target once the local castle is gone, so no more native life loss occurs.
+- No elimination / `OnCompleteGame` end screen reached: both peers stopped at one life.
 - No 3-process game test yet; the N-player transport is validated only by the no-game suite.
-- The QA bot uses the game's documented second Start Battle press (with hand clearing) via the legacy probe path. It is flag-gated and never active in a production config, but Stage 3 must still remove that probe path from the shipped flow.
+- The QA driver still uses the legacy second Start Battle press (with hand clearing) to engage combat. It is flag-gated and never active in a production config, but Stage 3 must still remove that probe path from the shipped flow.
+- Holding/reissuing `StartWave` is a delayed native call, not an extra one; it must be reviewed against the "no forced wave changes" rule before release.

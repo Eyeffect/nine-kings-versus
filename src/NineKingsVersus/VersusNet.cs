@@ -354,7 +354,7 @@ internal static class VersusNet
 
     private static void TryBroadcastRound(int wave)
     {
-        if (Mode != "host" || wave < Barrier.Wave || RoundWave == wave || !Barrier.AllReported())
+        if (Mode != "host" || wave < 0 || RoundWave == wave || !Barrier.AllReported(wave))
         {
             return;
         }

@@ -27,7 +27,8 @@ public sealed class MatchBarrier
     {
         Wave = wave;
         _ready.Clear();
-        _reported.Clear();
+        // Life reports are keyed by wave and must survive a wave change: a peer
+        // can report the previous round just after another peer advanced.
         _alive.Clear();
         if (alivePlayerIds != null)
         {
@@ -60,11 +61,6 @@ public sealed class MatchBarrier
     /// <summary>Mark a player's native life report for this wave.</summary>
     public void MarkLife(int playerId, int wave, int lives)
     {
-        if (wave < Wave)
-        {
-            return;
-        }
-
         _lives[playerId] = lives;
         _reported[playerId] = wave;
     }
@@ -118,6 +114,12 @@ public sealed class MatchBarrier
 
     public bool AllReported()
     {
+        return AllReported(Wave);
+    }
+
+    /// <summary>True when every alive player reported this exact wave.</summary>
+    public bool AllReported(int wave)
+    {
         if (_alive.Count == 0)
         {
             return false;
@@ -125,7 +127,7 @@ public sealed class MatchBarrier
 
         foreach (var id in _alive)
         {
-            if (!_reported.TryGetValue(id, out var wave) || wave < Wave)
+            if (!_reported.TryGetValue(id, out var reportedWave) || reportedWave != wave)
             {
                 return false;
             }

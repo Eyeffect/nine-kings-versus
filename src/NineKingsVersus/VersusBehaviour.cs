@@ -43,6 +43,9 @@ public sealed class VersusBehaviour : MonoBehaviour
     private static int _battleReleasedWave = -1;
     private static int _roundAppliedWave = -1;
     private static int _lastObservedWave = -1;
+    private static int _combatActiveWave = -1;
+    private static int _waveEndReportedWave = -1;
+    private static int _startWaveHeldWave = -1;
     private static int _lastNativeLifeWave = -1;
     private static string _lastNativeLifeReason;
     private static int _lastEnemyBaseHp = -1;
@@ -1514,11 +1517,12 @@ public sealed class VersusBehaviour : MonoBehaviour
     /// </summary>
     public static void OnWaveEnded(int wave)
     {
-        if (!BarrierActive || wave < 0)
+        if (!BarrierActive || wave < 0 || _waveEndReportedWave == wave)
         {
             return;
         }
 
+        _waveEndReportedWave = wave;
         var lives = Core.PlayerLife.Instance?.HealthPoints ?? -1;
         if (lives < 0)
         {
@@ -1648,6 +1652,18 @@ public sealed class VersusBehaviour : MonoBehaviour
                 !Core.Wave.Data.Running && !Core.Wave.Data.CombatOn)
             {
                 _qaBattleWave = wave;
+                // QA only: replenish the opponent army each wave so a long
+                // headless run does not empty the board and stall forever.
+                try
+                {
+                    Core.Wave.SpawnWave();
+                    VersusPlugin.Log.LogInfo($"qa-bot: respawned wave {wave} army");
+                }
+                catch (Exception e)
+                {
+                    VersusPlugin.Log.LogWarning($"qa-bot respawn failed: {e.Message}");
+                }
+
                 InvokeNativeStartBattle("qa-bot");
                 // The attached run needs the game's documented second press to
                 // clear the spawn wait. QA-only: never used outside bot-army.
@@ -1684,6 +1700,19 @@ public sealed class VersusBehaviour : MonoBehaviour
             OnWaveStarted(wave);
         }
 
+        // Combat ending is the native result boundary. Attached runs sometimes
+        // skip EndWave, so report the game's own life values here as well.
+        var combatOn = Core.Wave.Data?.CombatOn ?? false;
+        if (combatOn)
+        {
+            _combatActiveWave = wave;
+        }
+        else if (_combatActiveWave == wave && wave >= 0)
+        {
+            OnWaveEnded(wave);
+            _combatActiveWave = -1;
+        }
+
         if (wave >= 0 && _startBattleHeld && _battleReleasedWave != wave &&
             VersusNet.GoWave >= wave)
         {
@@ -1704,6 +1733,46 @@ public sealed class VersusBehaviour : MonoBehaviour
         {
             ApplyRound(VersusNet.RoundWave, VersusNet.RoundLives);
         }
+
+        // Release a StartWave call held by the lockstep barrier once the
+        // previous round has been shared by every peer.
+        if (_startWaveHeldWave > 0 && _roundAppliedWave >= _startWaveHeldWave - 1)
+        {
+            var held = _startWaveHeldWave;
+            _startWaveHeldWave = -1;
+            try
+            {
+                var method = typeof(Core.Wave).GetMethod("StartWave",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                method?.Invoke(null, null);
+                VersusPlugin.Log.LogInfo($"wave-lock: released StartWave for wave {held}");
+            }
+            catch (Exception e)
+            {
+                VersusPlugin.Log.LogWarning($"wave-lock release failed: {(e.InnerException ?? e).Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Hold the native StartWave until the previous round's life table has been
+    /// received from the host. This keeps peers in lockstep without a timer.
+    /// </summary>
+    public static bool MayStartWave(int wave)
+    {
+        if (!BarrierActive || wave <= 0 || _roundAppliedWave >= wave - 1)
+        {
+            return true;
+        }
+
+        if (_startWaveHeldWave != wave)
+        {
+            _startWaveHeldWave = wave;
+            VersusPlugin.Log.LogInfo($"wave-lock: holding StartWave for wave {wave} " +
+                $"(waiting for round {wave - 1}, applied={_roundAppliedWave})");
+        }
+
+        return false;
     }
 
     private static void InvokeNativeStartBattle(string reason)
@@ -2023,6 +2092,9 @@ public sealed class VersusBehaviour : MonoBehaviour
         _battleReleasedWave = -1;
         _roundAppliedWave = -1;
         _lastObservedWave = -1;
+        _combatActiveWave = -1;
+        _waveEndReportedWave = -1;
+        _startWaveHeldWave = -1;
         _lastNativeLifeWave = -1;
         _lastNativeLifeReason = null;
         _lastEnemyBaseHp = -1;

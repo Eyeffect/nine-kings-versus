@@ -74,6 +74,10 @@ internal static class Patches
                 LocalSessionProbe.EnsureEnemySnapshot("StartWave");
                 var hasEnemy = Core.Wave.CurrentMultiplayerEnemySnapshot != null;
                 var data = Core.Wave.Data;
+                if (!VersusBehaviour.MayStartWave(data?.Wave ?? -1))
+                {
+                    return false;
+                }
                 VersusPlugin.Log.LogInfo(
                     $"StartWave: multiplayerEnemySnapshot={hasEnemy} wave={data?.Wave} runMultiplayer={data?.IsMultiplayer} " +
                     $"map={(Core.Wave.MultiplayerMap == null ? "null" : Core.Wave.MultiplayerMap.activeSelf ? "active" : "inactive")}");

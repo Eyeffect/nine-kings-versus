@@ -96,7 +96,7 @@ internal static class Program
 
     private static void LoopbackTests()
     {
-        var port = 39100;
+        var port = 39300;
 
         // Single peer roundtrip
         using (var host = new TcpTransport())
@@ -339,6 +339,7 @@ internal static class Program
 
         barrier.BeginWave(2, new[] { 0, 1 });
         Check("new wave resets marks", !barrier.AllReady() && !barrier.AllReported());
+        Check("previous wave reports survive", barrier.AllReported(1) && !barrier.AllReported(2));
         Check("new wave keeps lives", barrier.GetLives(1) == 1);
         barrier.Reset();
         Check("barrier reset", barrier.Wave == -1 && barrier.Alive.Count == 0 && barrier.Lives.Count == 0);
@@ -346,7 +347,7 @@ internal static class Program
 
     private static void StarTests()
     {
-        var port = 39200;
+        var port = 39400;
         using (var host = new TcpTransport())
         using (var join1 = new TcpTransport())
         using (var join2 = new TcpTransport())
