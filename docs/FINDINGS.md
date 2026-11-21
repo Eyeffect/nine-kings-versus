@@ -386,3 +386,12 @@ Added `src/NineKingsVersus/VersusQueue.cs`: a thread-safe message inbox replacin
 - **(f) Snapshot size:** ~30,661-30,663 bytes at wave 56-57. For 9 players, host receives 8 x ~30 KB per state broadcast — negligible on LAN even at 10 Hz (~2.4 MB/s).
 - **Decompiled this stage:** `PrepareMultiplayerGauntlet` (0x180626D90), `Session.PopulateGauntletEnemies` (0x1808106D0), `Wave.GetEnemyKings` (0x180620B50), `PauseMenu.OnMenuBtn` (0x180674DD0), `PlacingView.RerollKing` (0x18067B590).
 
+
+## Match-start splash is the YearShowcase scene (2026-11-21)
+
+- The build ships `Assets/_Scenes/Gameplay/YearShowcase.unity` (build index 6). It is a separate scene from the launch cutscene `Assets/_Scenes/Menus/IntroductionVideo.unity` (index 1).
+- `Wave.StartNewGame(...)` defaults `sceneName` to `"YearShowcase"` and loads that scene directly. `instaLoad` only selects the transition duration; it does not choose the scene.
+- `Core.Animations.Introduction` (YearShowcase) builds the splash in `Awake`: a random starting year (500-900) in `_yearTxt`, the localized enemies title in `_enemiesTitle`, and one card per `Wave.GetEnemyKings()` entry. `m_RebellionImg` is the card art and `m_RebellionFire` supplies the black flake particles over the full-screen blue background.
+- `Introduction.IntroFinished()` loads `_gameplayScene` (serialized as `Gameplay`). `Update()` also lets any key skip the splash.
+- The versus start now passes `sceneName = "YearShowcase"` to `StartNewGame` instead of `"Gameplay"`. No splash element is painted, forced or replaced. Verified with window captures: blue full screen, black flakes, year text, "These are your enemies", four king cards, then Gameplay loads about 6.4 s later.
+- The `GameplayUI_EnemyShowcase` / `GameplayUI_YearShowcasePanel` path is NOT the pre-match splash; it is the in-game year/enemy UI. Do not use it for match start.
